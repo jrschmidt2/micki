@@ -296,6 +296,9 @@ subroutine solve(neqin, nrates, nt, tfinal, t1, u1, du1, r1)
       do while (tout - t1(i) > dt * 0.01)
          call ida_step(tout, t1(i), u1(:, i), du1(:, i), ier)
       end do
+      ! Evaluate rates at the returned state (rates otherwise holds the
+      ! solver's last internal residual evaluation)
+      call ratecalc({neq}, u1(:, i))
       r1(:, i) = rates
    end do
 
