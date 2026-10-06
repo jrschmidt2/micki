@@ -21,6 +21,7 @@ module ida_state
    use, intrinsic :: iso_c_binding
    use fsundials_core_mod
    use fida_mod
+   use fsunmatrix_dense_mod
 
    implicit none
 
@@ -55,6 +56,33 @@ contains
 
    end function micki_resfn
 
+   ! IDA dense Jacobian callback; wraps fidadjac
+   integer(c_int) function micki_jacfn(t, cj, sunvec_y, sunvec_yp, sunvec_r, &
+                                       sunmat_j, user_data, tmp1, tmp2, tmp3) &
+                                       result(ierr) bind(C)
+
+      real(c_double), value :: t, cj
+      type(N_Vector) :: sunvec_y, sunvec_yp, sunvec_r
+      type(SUNMatrix) :: sunmat_j
+      type(c_ptr), value :: user_data
+      type(N_Vector) :: tmp1, tmp2, tmp3
+
+      real(c_double), pointer :: y(:), yp(:), r(:), jac(:)
+      real*8 :: rpar(1), ewt(1), wk(1)
+      integer :: ipar(1), jacerr
+
+      y => FN_VGetArrayPointer(sunvec_y)
+      yp => FN_VGetArrayPointer(sunvec_yp)
+      r => FN_VGetArrayPointer(sunvec_r)
+      ! column-major neq x neq, matching fidadjac's jac(neqin, neqin)
+      jac => FSUNDenseMatrix_Data(sunmat_j)
+
+      call fidadjac(size(y), t, y, yp, r, jac, cj, ewt, 0.d0, ipar, rpar, &
+                    wk, wk, wk, jacerr)
+      ierr = jacerr
+
+   end function micki_jacfn
+
    subroutine free_ida()
 
       integer(c_int) :: ier
@@ -76,7 +104,7 @@ contains
 
 end module ida_state
 
-subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
+subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec, use_jac)
 
    use, intrinsic :: iso_c_binding
    use fsundials_core_mod
@@ -93,6 +121,7 @@ subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
    real*8, intent(in) :: y0in(neqin), rtol, atol(*)
    real*8, intent(in) :: rpar(*)
    real*8, intent(in) :: id_vec(neqin)
+   integer, intent(in) :: use_jac
    real*8 :: constr_vec(neqin)
    real*8 :: t0, yptmp(neqin)
    integer :: ier
@@ -156,12 +185,15 @@ subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
    ! set constraints (all yi >= 0.)
    ier = FIDASetConstraints(ida_mem, sv_constr)
 
-   ! Dense LAPACK linear solver. No Jacobian function is attached, so IDA
-   ! uses its internal difference-quotient Jacobian (as micki did with
-   ! Sundials 4.X); fidadjac is currently unused.
+   ! Dense LAPACK linear solver. If use_jac is nonzero, the analytic
+   ! Jacobian (fidadjac) is used; otherwise IDA falls back to its internal
+   ! difference-quotient Jacobian (the behavior of micki with Sundials 4.X).
    sm_a => FSUNDenseMatrix(n, n, ctx)
    sls => FSUNLinSol_LapackDense(sv_y, sm_a, ctx)
    ier = FIDASetLinearSolver(ida_mem, sls, sm_a)
+   if (use_jac /= 0) then
+      ier = FIDASetJacFn(ida_mem, c_funloc(micki_jacfn))
+   end if
 
 end subroutine initialize
 
@@ -278,6 +310,44 @@ subroutine finalize
    call free_ida()
 
 end subroutine finalize
+
+subroutine calc_res(neqin, y, yp, res, ier)
+
+   ! Evaluate the DAE residual (for testing/debugging).
+
+   implicit none
+
+   integer, intent(in) :: neqin
+   real*8, intent(in) :: y(neqin), yp(neqin)
+   real*8, intent(out) :: res(neqin)
+   integer, intent(out) :: ier
+
+   real*8 :: rpar(1)
+   integer :: ipar(1)
+
+   call fidaresfun(0.d0, y, yp, res, ipar, rpar, ier)
+
+end subroutine calc_res
+
+subroutine calc_jac(neqin, y, yp, cj, jac, ier)
+
+   ! Evaluate the analytic Jacobian dF/dy + cj dF/dyp (for testing/debugging).
+
+   implicit none
+
+   integer, intent(in) :: neqin
+   real*8, intent(in) :: y(neqin), yp(neqin), cj
+   real*8, intent(out) :: jac(neqin, neqin)
+   integer, intent(out) :: ier
+
+   real*8 :: r(neqin), rpar(1), ewt(1), wk(1)
+   integer :: ipar(1)
+
+   r = 0
+   call fidadjac(neqin, 0.d0, y, yp, r, jac, cj, ewt, 0.d0, ipar, rpar, &
+                 wk, wk, wk, ier)
+
+end subroutine calc_jac
 
 subroutine ida_step(tout, tret, u, du, ier)
 
@@ -442,7 +512,7 @@ python module {modname} ! in
             integer dimension({nvac},{neq}) :: dvacdy
             integer, optional :: neq={neq}
         end module solve_ida
-        subroutine initialize(neqin,y0in,rtol,atol,ipar,rpar,id_vec) ! in :{modname}:{modname}.f90
+        subroutine initialize(neqin,y0in,rtol,atol,ipar,rpar,id_vec,use_jac) ! in :{modname}:{modname}.f90
             use solve_ida, only: neq,iout,rout,y0,yp0,mas,diff,dypdr,dvacdy
             integer, optional,intent(in),check(len(y0in)>=neqin),depend(y0in) :: neqin=len(y0in)
             real*8 dimension(neqin),intent(in) :: y0in
@@ -451,6 +521,7 @@ python module {modname} ! in
             integer dimension(*),intent(in) :: ipar
             real*8 dimension(*),intent(in) :: rpar
             real*8 dimension(neqin),intent(in),depend(neqin) :: id_vec
+            integer intent(in) :: use_jac
         end subroutine initialize
         subroutine find_steady_state(neqin,nrates,dt,maxiter,epsilon,t1,u1,du1,r1) ! in :{modname}:{modname}.f90
             use solve_ida, only: y0,yp0,iout,rout,rates,dypdr
@@ -475,6 +546,21 @@ python module {modname} ! in
             real*8 intent(out),dimension(neqin,nt),depend(neqin,nt) :: du1
             real*8 intent(out),dimension(nrates,nt),depend(nrates,nt) :: r1
         end subroutine solve
+        subroutine calc_res(neqin,y,yp,res,ier) ! in :{modname}:{modname}.f90
+            integer, optional,intent(in),check(len(y)>=neqin),depend(y) :: neqin=len(y)
+            real*8 dimension(neqin),intent(in) :: y
+            real*8 dimension(neqin),intent(in),depend(neqin) :: yp
+            real*8 dimension(neqin),intent(out),depend(neqin) :: res
+            integer intent(out) :: ier
+        end subroutine calc_res
+        subroutine calc_jac(neqin,y,yp,cj,jac,ier) ! in :{modname}:{modname}.f90
+            integer, optional,intent(in),check(len(y)>=neqin),depend(y) :: neqin=len(y)
+            real*8 dimension(neqin),intent(in) :: y
+            real*8 dimension(neqin),intent(in),depend(neqin) :: yp
+            real*8 intent(in) :: cj
+            real*8 dimension(neqin,neqin),intent(out),depend(neqin) :: jac
+            integer intent(out) :: ier
+        end subroutine calc_jac
         subroutine finalize ! in :{modname}:{modname}.f90
         end subroutine finalize
     end interface

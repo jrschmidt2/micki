@@ -427,7 +427,8 @@ class Reaction(object):
 
 
 class Model(object):
-    def __init__(self, T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1):
+    def __init__(self, T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
+                 analytic_jac=False):
         self.reactions = OrderedDict()
         self._reactions = []
         self._species = []
@@ -439,6 +440,9 @@ class Model(object):
         self.initialized = False
         self.U0 = None
         self.rhocat = rhocat
+        # Use the symbolically derived Jacobian in the DAE solver instead
+        # of IDA's difference-quotient approximation
+        self.analytic_jac = analytic_jac
 
         self.T = T  # System temperature
         self.Asite = Asite  # Area of adsorption site
@@ -769,7 +773,8 @@ class Model(object):
         # Pass initial values to the fortran module
         atol = np.array([1e-32] * self.nvariables)
         atol += 1e-16 * algvar
-        self.finitialize(U0, 1e-10, atol, [], [], algvar)
+        self.finitialize(U0, 1e-10, atol, [], [], algvar,
+                         int(self.analytic_jac))
 
         self.initialized = True
 
@@ -1024,7 +1029,8 @@ class Model(object):
                                   RuntimeWarning, stacklevel=2)
 
     def copy(self, initialize=True):
-        newmodel = Model(self.T, self.Asite, self.z, self.lattice, self.rhocat)
+        newmodel = Model(self.T, self.Asite, self.z, self.lattice, self.rhocat,
+                         analytic_jac=self.analytic_jac)
         newmodel.add_reactions(self.reactions)
         newmodel.set_fixed(self.fixed)
         newmodel.set_solvent(self.solvent)
