@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import wgs  # noqa: E402
 
-# The reference was generated with the original Fortran/SUNDIALS 4.X
-# implementation; the current solver reproduces it to ~2e-10. The tolerances
+# The reference agrees with the original Fortran/SUNDIALS 4.X results to
+# ~1e-10 (except conditions 13 and 17, corrected afterwards). The tolerances
 # leave room for different platforms and library versions (the solver itself
 # uses rtol=1e-10) while still catching any real change in the model or
 # solver.

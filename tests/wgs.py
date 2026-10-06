@@ -1,16 +1,19 @@
 """Water-gas shift microkinetic model used as a regression test.
 
-The model (species database, energy shifts, lateral interactions, reactions
-and the 21 experimental reaction conditions) is taken unchanged from the
-original wgs_tof.py example, which compares against the TOFs of Grabow et al.
+The model (species database, energy shifts, lateral interactions, reactions)
+is taken unchanged from the original wgs_tof.py example. The 21 experimental
+reaction conditions are those of Table 5 in Grabow et al., J. Phys. Chem. C
+2008, 112, 4608 (conditions 13 and 17 were mistyped in wgs_tof.py).
 
 Running this file regenerates the reference data used by test_wgs.py:
 
     python tests/wgs.py
 
 Only do that after an intentional change in results, and say why in the
-commit message. The current reference was generated with the original
-Fortran/SUNDIALS 4.X implementation (commit bb8aa7d).
+commit message. The current reference was generated with the sundials4py
+solver after correcting conditions 13 and 17; for the other 19 conditions it
+agrees with the original Fortran/SUNDIALS 4.X results (commit bb8aa7d) to
+~1e-10.
 """
 
 import json
@@ -28,7 +31,7 @@ from micki.db import read_from_db  # noqa: E402
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 REFERENCE = os.path.join(DATA_DIR, 'wgs_reference.json')
 
-# (T [K], P_CO, P_H2O, P_CO2, P_H2 [atm], flow rate)
+# (T [K], P_CO, P_H2O, P_CO2, P_H2 [atm], flow rate [cm3/min])
 CONDITIONS = [
     (523, 0.154, 0.208, 0.000, 0.000, 102.9),  # 1
     (548, 0.055, 0.208, 0.000, 0.000, 85.9),   # 2
@@ -42,11 +45,11 @@ CONDITIONS = [
     (548, 0.140, 0.208, 0.151, 0.000, 110.1),  # 10
     (548, 0.102, 0.208, 0.192, 0.000, 109.1),  # 11
     (548, 0.134, 0.208, 0.000, 0.037, 103.5),  # 12
-    (548, 0.156, 0.208, 0.000, 0.037, 102.1),  # 13
+    (548, 0.156, 0.208, 0.000, 0.097, 102.1),  # 13
     (548, 0.130, 0.208, 0.000, 0.123, 105.9),  # 14
     (548, 0.134, 0.208, 0.177, 0.123, 95.7),   # 15
     (548, 0.132, 0.208, 0.000, 0.173, 103.8),  # 16
-    (548, 0.145, 0.208, 0.000, 0.191, 94.4),   # 17
+    (548, 0.146, 0.208, 0.000, 0.191, 94.4),   # 17
     (548, 0.159, 0.208, 0.000, 0.208, 101.1),  # 18
     (548, 0.198, 0.208, 0.000, 0.000, 102.6),  # 19
     (548, 0.223, 0.208, 0.000, 0.000, 88.3),   # 20

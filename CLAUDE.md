@@ -20,7 +20,7 @@ python -m unittest discover -s tests -v                                   # all 
 python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test (~20 s)
 ```
 
-`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. The reference was generated with the original Fortran/SUNDIALS 4.X implementation; the current solver reproduces it to ~2e-10. After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
+`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. Conditions follow Table 5 of Grabow et al., J. Phys. Chem. C 2008, 112, 4608 (the original `wgs_tof.py` had y(H2) of condition 13 and y(CO) of condition 17 mistyped). Apart from those two conditions, the reference agrees with the original Fortran/SUNDIALS 4.X results to ~1e-10. After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
 
 ## Architecture
 
