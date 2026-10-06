@@ -17,6 +17,20 @@ from sundials4py import core, idas
 NEG_TOL = -1e-10
 
 
+def _complex_step_abs(z):
+    # |z| for real z that keeps the derivative under complex-step
+    # differentiation (numpy.abs of a complex number is its modulus, which
+    # drops the imaginary perturbation)
+    return np.where(np.real(z) < 0, -z, z)
+
+
+# Functions used when lambdifying the rate expressions. Piecewise, Max, Min
+# and Heaviside already work with complex-step differentiation (numpy
+# compares complex numbers by their real part first); Abs needs the
+# replacement above. re, im, conjugate and arg are not supported.
+_LAMBDIFY_MODULES = [{'Abs': _complex_step_abs}, 'numpy']
+
+
 class IDASolver(object):
     """Integrate M dy/dt = dypdr . r(y, vac(y), c) with IDA.
 
@@ -51,9 +65,9 @@ class IDASolver(object):
         self.fixed_values = np.array(fixed_values, dtype=float)
 
         self._vac = sym.lambdify([symbols, fixed_symbols], list(vac_exprs),
-                                 'numpy', cse=True)
+                                 _LAMBDIFY_MODULES, cse=True)
         self._rates = sym.lambdify([symbols, vac_symbols, fixed_symbols],
-                                   list(rates), 'numpy', cse=True)
+                                   list(rates), _LAMBDIFY_MODULES, cse=True)
 
         self.dypdr = np.array(dypdr, dtype=float)
         self.id_vec = np.array(id_vec, dtype=float)
