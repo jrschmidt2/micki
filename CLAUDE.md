@@ -38,6 +38,7 @@ Consequences to keep in mind:
 - `setup_execs()` writes `solve_ida.f90` into the **current working directory** as a debugging aid; inspect it when the generated Fortran fails to compile. f2py stderr is printed only on failure.
 - `reactor='PFR'` zeroes the mass-matrix entries of adsorbates (algebraic, pseudo-steady-state); `'CSTR'` treats all variables as differential.
 - SUNDIALS handles live in the `ida_state` Fortran module (not exposed through the `.pyf`); `micki_resfn` is the `bind(C)` residual callback wrapping `fidaresfun`. By default no Jacobian function is attached, so IDA uses its difference-quotient Jacobian (as the old Sundials 4.X/FCMIX version did). `Model(..., analytic_jac=True)` registers `micki_jacfn`, which wraps the symbolically derived `fidadjac`. `calc_res`/`calc_jac` are exposed on the compiled module (`model._solve_ida`) for checking the Jacobian against finite differences.
+- If any rate expression (e.g. via `species.lateral`) refers to a species that is not in the model, `set_initial_conditions` raises `ValueError` naming the species and reactions; such symbols used to be silently set to 0.
 - `CFLAGS="-w -std=c99"` is set as a gcc workaround.
 
 **Supporting modules**

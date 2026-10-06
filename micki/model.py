@@ -727,14 +727,23 @@ class Model(object):
                 self.rates[j] -= rate_rev
 
 
-        # All symbols referring to unknown species are going to be replaced
-        # by 0
-        unknown_symbols = set()
-        for rate in self.rates:
-            unknown_symbols.update(rate.atoms(sym.Symbol))
-        unknown_symbols -= known_symbols
-        unknown_symbols -= set(self.symbols_all)
-        subs.update({symbol: 0 for symbol in unknown_symbols})
+        # Symbols referring to species that are not part of the model can
+        # only come from lateral interactions (or other coverage-dependent
+        # energies) and are almost certainly a user error.
+        known_symbols.update(self.symbols_all)
+        rxn_to_name = {rxn: name for name, rxn in self.reactions.items()}
+        unknown = OrderedDict()
+        for rxn, rate in zip(self._reactions, self.rates):
+            for symbol in sorted(sym.sympify(rate).atoms(sym.Symbol), key=str):
+                if symbol not in known_symbols:
+                    unknown.setdefault(str(symbol), []).append(rxn_to_name[rxn])
+        if unknown:
+            raise ValueError(
+                'Rate expressions depend on species that are not in the '
+                'model (check lateral interactions): ' +
+                '; '.join('{} (in reaction{} {})'.format(
+                    label, 's' if len(names) > 1 else '', ', '.join(names))
+                          for label, names in unknown.items()))
 
         # Fixed species must have their symbols replaced by their fixed
         # initial values.
