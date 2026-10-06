@@ -18,38 +18,44 @@ NEG_TOL = -1e-10
 
 
 class IDASolver(object):
-    """Integrate M dy/dt = dypdr . r(y, vac(y)) with IDA.
+    """Integrate M dy/dt = dypdr . r(y, vac(y), c) with IDA.
 
     symbols: sympy symbols of the variable species (length n)
     vac_symbols: sympy symbols of the vacancies (length nvac)
-    vac_exprs: vacancy concentrations as expressions of `symbols`
-    rates, drdy, drdvac: reaction rates (nrxns) and their partial
-        derivatives w.r.t. `symbols` (nrxns x n) and `vac_symbols`
-        (nrxns x nvac)
+    vac_exprs: vacancy concentrations as expressions of `symbols` and
+        `fixed_symbols`
+    rates: reaction rates (nrxns) as expressions of `symbols`,
+        `vac_symbols` and `fixed_symbols`
     dypdr: stoichiometry, dy_i/dt contribution of reaction j (n x nrxns)
-    dvacdy: derivative of the vacancies w.r.t. `symbols` (nvac x n)
     id_vec: 1 for differential, 0 for algebraic variables (length n)
+    fixed_symbols, fixed_values: species held at constant concentration c
+        (fixed species and solvent); their values are passed at evaluation
+        time rather than substituted into the expressions, which is much
+        faster to set up.
+
+    The Jacobian is computed by complex-step differentiation of the rate
+    functions, which is exact to rounding (no symbolic derivatives needed).
     """
 
-    def __init__(self, symbols, vac_symbols, vac_exprs, rates, drdy, drdvac,
-                 dypdr, dvacdy, id_vec):
+    # complex-step size; any tiny value gives derivatives exact to rounding
+    _H = 1e-30
+
+    def __init__(self, symbols, vac_symbols, vac_exprs, rates, dypdr, id_vec,
+                 fixed_symbols=(), fixed_values=()):
         self.n = len(symbols)
         self.nvac = len(vac_symbols)
         self.nrates = len(rates)
         symbols = list(symbols)
         vac_symbols = list(vac_symbols)
+        fixed_symbols = list(fixed_symbols)
+        self.fixed_values = np.array(fixed_values, dtype=float)
 
-        self._vac = sym.lambdify([symbols], list(vac_exprs), 'numpy',
-                                 cse=True)
-        self._rates = sym.lambdify([symbols, vac_symbols], list(rates),
-                                   'numpy', cse=True)
-        self._drdy = sym.lambdify([symbols, vac_symbols],
-                                  sym.Matrix(drdy), 'numpy', cse=True)
-        self._drdvac = sym.lambdify([symbols, vac_symbols],
-                                    sym.Matrix(drdvac), 'numpy', cse=True)
+        self._vac = sym.lambdify([symbols, fixed_symbols], list(vac_exprs),
+                                 'numpy', cse=True)
+        self._rates = sym.lambdify([symbols, vac_symbols, fixed_symbols],
+                                   list(rates), 'numpy', cse=True)
 
         self.dypdr = np.array(dypdr, dtype=float)
-        self.dvacdy = np.array(dvacdy, dtype=float)
         self.id_vec = np.array(id_vec, dtype=float)
         self.mas = np.diag(self.id_vec)
         # Conserved quantities (e.g. element balances when no species are
@@ -62,14 +68,32 @@ class IDASolver(object):
 
     # Model equations
 
+    @staticmethod
+    def _to_array(values, size, shape, dtype):
+        # lambdify returns a list with one entry per expression; entries
+        # that do not depend on the arguments are scalars
+        if not shape:
+            return np.array(values, dtype=dtype).reshape(size)
+        out = np.empty((size,) + shape, dtype=dtype)
+        for i, v in enumerate(values):
+            out[i] = v
+        return out
+
+    def _raw_vacancies(self, y, shape, dtype):
+        return self._to_array(self._vac(y, self.fixed_values), self.nvac,
+                              shape, dtype)
+
+    def _raw_rates(self, y, vac, shape, dtype):
+        return self._to_array(self._rates(y, vac, self.fixed_values),
+                              self.nrates, shape, dtype)
+
     def vacancies(self, y):
-        vac = np.array(self._vac(y), dtype=float).reshape(self.nvac)
+        vac = self._raw_vacancies(y, (), float)
         vac[vac < NEG_TOL] = 0.
         return vac
 
     def rates(self, y):
-        return np.array(self._rates(y, self.vacancies(y)),
-                        dtype=float).reshape(self.nrates)
+        return self._raw_rates(y, self.vacancies(y), (), float)
 
     def residual(self, y, yp):
         """Return the DAE residual and an error flag (1 if y < 0)."""
@@ -78,22 +102,26 @@ class IDASolver(object):
         return res, ier
 
     def jacobian(self, y, cj):
-        """Return dF/dy + cj dF/dyp and an error flag."""
+        """Return dF/dy + cj dF/dyp and an error flag.
+
+        Negative concentrations and vacancies (below NEG_TOL) are clipped to
+        zero, keeping their derivatives, and flagged as a recoverable error.
+        """
         y = np.array(y, dtype=float)
         ier = 0
         if np.any(y < NEG_TOL):
             y[y < NEG_TOL] = 0.
             ier = 1
-        vac = np.array(self._vac(y), dtype=float).reshape(self.nvac)
-        if np.any(vac < NEG_TOL):
-            vac[vac < NEG_TOL] = 0.
+        # column j of Y is y perturbed by i*H in component j; evaluating all
+        # columns at once gives the whole Jacobian in one function call
+        Y = y[:, None] + 1j * self._H * np.eye(self.n)
+        vac = self._raw_vacancies(Y, (self.n,), complex)
+        neg = vac.real < NEG_TOL
+        if np.any(neg):
+            vac[neg] = 1j * vac[neg].imag
             ier = 1
-        drdy = np.array(self._drdy(y, vac), dtype=float).reshape(
-            self.nrates, self.n)
-        drdvac = np.array(self._drdvac(y, vac), dtype=float).reshape(
-            self.nrates, self.nvac)
-        drdy = drdy + drdvac @ self.dvacdy
-        return self.dypdr @ drdy - cj * self.mas, ier
+        r = self._raw_rates(Y, vac, (self.n,), complex)
+        return (self.dypdr @ r).imag / self._H - cj * self.mas, ier
 
     # IDA callbacks
 
@@ -215,8 +243,7 @@ class IDASolver(object):
         """
         def evaluate(x):
             y = np.exp(x)
-            if self.nvac and np.any(
-                    np.asarray(self._vac(y), dtype=float) < 0):
+            if self.nvac and np.any(self._raw_vacancies(y, (), float) < 0):
                 return None
             F, _ = self.residual(y, np.zeros(self.n))
             J, _ = self.jacobian(y, 0.)

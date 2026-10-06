@@ -660,11 +660,6 @@ class Model(object):
             self.symbols_dict[species] = species.symbol
 
         self.symbols = [species.symbol for species in self._variable_species]
-
-        # subs converts a species symbol to either its initial value if
-        # it is fixed or to a constraint (such as constraining the total
-        # number of adsorption sites)
-        subs = {}
         
         self.vac_sym = np.zeros(len(self.vacancy), dtype=object)
         # A vacancy will be represented by the total number of sites
@@ -742,36 +737,22 @@ class Model(object):
                     label, 's' if len(names) > 1 else '', ', '.join(names))
                           for label, names in unknown.items()))
 
-        # Fixed species must have their symbols replaced by their fixed
-        # initial values.
-        for species in self._species:
-            if species.label in self.fixed or species.label == self.solvent:
-                label = species.label
-                subs[species.symbol] = self.U0[label]
+        # Fixed species (and the solvent) keep their symbols; their
+        # concentrations are passed to the solver at evaluation time.
+        fixed_species = [species for species in self._species
+                         if species.label in self.fixed
+                         or species.label == self.solvent]
 
-        # Additionally, fixed species concentrations into rate
-        # expressions
         for i, r in enumerate(self.rates):
-            self.rates[i] = sym.sympify(r).subs(subs)
-
-        # derivative of rate expressions w.r.t. concentrations and vacancies
-        self.drdy = np.zeros((nrxns, self.nvariables), dtype=object)
-        self.drdvac = np.zeros((nrxns, len(self.vacancy)), dtype=object)
-        for i, rate in enumerate(self.rates):
-            for j, symbol in enumerate(self.symbols):
-                self.drdy[i, j] = sym.diff(rate, symbol)
-            for j, vac in enumerate(self.vacancy):
-                self.drdvac[i, j] = sym.diff(rate, vac.symbol)
-
-        # Vacancy concentrations as functions of the variable species
-        # (fixed species replaced by their concentrations)
-        vac_exprs = [sym.sympify(expr).subs(subs) for expr in self.vac_sym]
+            self.rates[i] = sym.sympify(r)
 
         self._solver = IDASolver(self.symbols,
                                  [vac.symbol for vac in self.vacancy],
-                                 vac_exprs, self.rates, self.drdy,
-                                 self.drdvac, self.dypdr, self.dvacdy,
-                                 algvar)
+                                 [sym.sympify(expr) for expr in self.vac_sym],
+                                 self.rates, self.dypdr, algvar,
+                                 [species.symbol for species in fixed_species],
+                                 [self.U0[species.label]
+                                  for species in fixed_species])
 
         # Initial values of the variable species, in solver order
         U0 = []
