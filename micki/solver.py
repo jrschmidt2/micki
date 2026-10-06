@@ -68,6 +68,20 @@ class IDASolver(object):
                                  _LAMBDIFY_MODULES, cse=True)
         self._rates = sym.lambdify([symbols, vac_symbols, fixed_symbols],
                                    list(rates), _LAMBDIFY_MODULES, cse=True)
+        # Versions on plain Python floats with the math module, ~4x faster
+        # for the real-valued evaluations that dominate integration (numpy
+        # has a large per-operation overhead on scalars). Checked against
+        # the numpy versions in initialize().
+        self._fixed_list = self.fixed_values.tolist()
+        try:
+            self._vac_math = sym.lambdify([symbols, fixed_symbols],
+                                          list(vac_exprs), 'math', cse=True)
+            self._rates_math = sym.lambdify(
+                [symbols, vac_symbols, fixed_symbols], list(rates), 'math',
+                cse=True)
+            self._fast = True
+        except Exception:
+            self._fast = False
 
         self.dypdr = np.array(dypdr, dtype=float)
         self.id_vec = np.array(id_vec, dtype=float)
@@ -101,19 +115,57 @@ class IDASolver(object):
         return self._to_array(self._rates(y, vac, self.fixed_values),
                               self.nrates, shape, dtype)
 
+    # Exceptions the math-module versions raise where numpy would return
+    # inf/nan (overflow, domain errors, complex results of powers); such
+    # calls are repeated with the numpy versions.
+    _MATH_ERRORS = (ArithmeticError, ValueError, TypeError)
+
+    def _fast_vacancies(self, yl):
+        return [0. if v < NEG_TOL else v
+                for v in self._vac_math(yl, self._fixed_list)]
+
     def vacancies(self, y):
+        if self._fast:
+            try:
+                return np.array(self._fast_vacancies(np.asarray(y).tolist()),
+                                dtype=float).reshape(self.nvac)
+            except self._MATH_ERRORS:
+                pass
         vac = self._raw_vacancies(y, (), float)
         vac[vac < NEG_TOL] = 0.
         return vac
 
     def rates(self, y):
-        return self._raw_rates(y, self.vacancies(y), (), float)
+        if self._fast:
+            try:
+                yl = np.asarray(y).tolist()
+                return np.array(self._rates_math(yl, self._fast_vacancies(yl),
+                                                 self._fixed_list),
+                                dtype=float).reshape(self.nrates)
+            except self._MATH_ERRORS:
+                pass
+        vac = self._raw_vacancies(y, (), float)
+        vac[vac < NEG_TOL] = 0.
+        return self._raw_rates(y, vac, (), float)
 
     def residual(self, y, yp):
         """Return the DAE residual and an error flag (1 if y < 0)."""
-        ier = int(np.any(y < NEG_TOL))
+        ier = int(np.min(y) < NEG_TOL) if self.n else 0
         res = self.dypdr @ self.rates(y) - self.id_vec * yp
         return res, ier
+
+    def _check_fast_path(self, y):
+        # use the math-module functions only if they agree with the numpy
+        # ones (e.g. a function without a math equivalent fails here)
+        if not self._fast:
+            return
+        try:
+            fast = self.rates(y)
+            self._fast = False
+            slow = self.rates(y)
+            self._fast = bool(np.allclose(fast, slow, rtol=1e-12, atol=0.))
+        except Exception:
+            self._fast = False
 
     def jacobian(self, y, cj):
         """Return dF/dy + cj dF/dyp and an error flag.
@@ -159,6 +211,7 @@ class IDASolver(object):
 
     def initialize(self, y0, rtol, atol, analytic_jac=False):
         self.y0 = np.array(y0, dtype=float)
+        self._check_fast_path(self.y0)
         # initial time derivatives from the rate equations
         self.yp0, _ = self.residual(self.y0, np.zeros(self.n))
 

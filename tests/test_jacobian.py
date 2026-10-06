@@ -1,4 +1,4 @@
-"""The complex-step Jacobian of IDASolver with non-analytic functions.
+"""IDASolver: complex-step Jacobian with non-analytic functions, fast path.
 
 Run from the repository root:
 
@@ -67,6 +67,36 @@ class ComplexStepJacobianTest(unittest.TestCase):
                 Jfd -= cj * s.mas
                 np.testing.assert_allclose(J, Jfd, rtol=1e-7, atol=1e-8,
                                            err_msg='y = {}'.format(y))
+
+
+class FastPathTest(unittest.TestCase):
+    """The math-module evaluation path and its fallback to numpy."""
+
+    def test_overflow_falls_back_to_numpy(self):
+        a, b, v = sym.symbols('a b v')
+        rates = [sym.exp(800 * a) * b, a - b]
+        s = IDASolver([a, b], [v], [1 - a - b], rates, [[1, -1], [-1, 1]],
+                      [1., 1.])
+        s.initialize([0.1, 0.2], 1e-10, np.array([1e-16, 1e-16]))
+        self.assertTrue(s._fast)
+        # exp(800) overflows: math raises OverflowError, numpy gives inf
+        with np.errstate(over='ignore', invalid='ignore'):
+            r = s.rates(np.array([1.0, 0.0]))
+        self.assertTrue(np.isnan(r[0]) or np.isinf(r[0]))
+        self.assertEqual(r[1], 1.0)
+
+    def test_fast_and_numpy_paths_agree(self):
+        s = ComplexStepJacobianTest('setUp')
+        s.setUp()
+        solver = s.solver
+        solver.initialize([0.35, 0.3], 1e-10, np.array([1e-16, 1e-16]))
+        for y in s.points:
+            y = np.array(y)
+            solver._fast = True
+            fast = solver.residual(y, np.zeros(2))[0]
+            solver._fast = False
+            slow = solver.residual(y, np.zeros(2))[0]
+            np.testing.assert_allclose(fast, slow, rtol=1e-14)
 
 
 if __name__ == '__main__':

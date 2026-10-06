@@ -660,6 +660,12 @@ class Model(object):
             self.symbols_dict[species] = species.symbol
 
         self.symbols = [species.symbol for species in self._variable_species]
+        # labels and reaction names in solver order, for converting solver
+        # output to dicts
+        self._variable_labels = [species.label
+                                 for species in self._variable_species]
+        rxn_to_name = {rxn: name for name, rxn in self.reactions.items()}
+        self._reaction_names = [rxn_to_name[rxn] for rxn in self._reactions]
         
         self.vac_sym = np.zeros(len(self.vacancy), dtype=object)
         # A vacancy will be represented by the total number of sites
@@ -772,31 +778,22 @@ class Model(object):
     def _out_array_to_dict(self, U, dU, r):
         Ui = {}
         dUi = {}
-        ri = {}
-        fixed = self.fixed
+        fixed = list(self.fixed)
         if self.solvent is not None:
-            fixed += [self.solvent]
+            fixed.append(self.solvent)
         for name in fixed:
             dUi[name] = 0.
             Ui[name] = self.U0[name]
-        for j, symbol in enumerate(self.symbols):
-            for species, isymbol in self.symbols_dict.items():
-                if symbol == isymbol:
-                    Ui[species.label] = U[j]
-                    dUi[species.label] = dU[j]
+        for label, Uj, dUj in zip(self._variable_labels, U, dU):
+            Ui[label] = Uj
+            dUi[label] = dUj
         for vacancy in self.vacancy:
             Ui[vacancy.label] = self.vactot[vacancy]
             for species in self.vacspecies[vacancy]:
                 Ui[vacancy.label] -= Ui[species.label]
             dUi[vacancy.label] = 0
 
-        j = 0
-        rxn_to_name = {}
-        for name, reaction in self.reactions.items():
-            rxn_to_name[reaction] = name
-        for reaction in self._reactions:
-            ri[rxn_to_name[reaction]] = r[j]
-            j += 1
+        ri = dict(zip(self._reaction_names, r))
 
         return Ui, dUi, ri
 
