@@ -38,3 +38,7 @@ export LD_LIBRARY_PATH=$MICKI_SUNDIALS_DIR/lib64:$LD_LIBRARY_PATH<br>
 
 #fetch Micki itself<br>
 git clone https://github.com/jrschmidt2/micki.git
+
+### Testing:
+With the environment above set up, run the water-gas shift regression test (about 2 minutes) from the repository root:<br>
+python -m unittest discover -s tests -v

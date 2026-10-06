@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Micki is an object-oriented microkinetic modeling package in Python. Users build `Gas`/`Liquid`/`Adsorbate`/`Electron` species (thermochemistry from ASE `Atoms` + vibrational frequencies), combine them into `Reaction`s, add those to a `Model`, and integrate the resulting DAE system with SUNDIALS IDA via a Fortran module that is generated and compiled at runtime.
 
-There is no build system, packaging (`setup.py`), test suite, or linter config. The package is used by putting the repo root on `PYTHONPATH` and running `import micki`.
+There is no build system, packaging (`setup.py`), or linter config. The package is used by putting the repo root on `PYTHONPATH` and running `import micki`.
 
 ## Dependencies / environment
 
@@ -16,7 +16,14 @@ There is no build system, packaging (`setup.py`), test suite, or linter config. 
 - LAPACK: defaults to MKL (`-lmkl_rt`); override with the `MICKI_LAPACK` env var (e.g. `MICKI_LAPACK="-lmkl_gf_lp64 -lmkl_sequential -lmkl_core"`). Use an LP64 (32-bit integer) LAPACK to match `SUNDIALS_INDEX_SIZE=32`. SUNDIALS and LAPACK library dirs must be on both `LIBRARY_PATH` (link) and `LD_LIBRARY_PATH` (import).
 - Compiler/linker errors from f2py are mostly suppressed (`-w`, `--quiet`); a failed build surfaces only as `ModuleNotFoundError: No module named 'tmpXXXX'`. To see the real error, run `python -m numpy.f2py -c <pyf> solve_ida.f90 -l...` by hand on the `solve_ida.f90` left in the working directory.
 
-There are no tests or examples in this repo. A water-gas-shift example (`wgs_tof.py` + `wgs.json`) is used as an end-to-end check; it computes TOFs for 21 conditions and compares them with reference values in the script.
+## Tests
+
+```
+python -m unittest discover -s tests -v                                   # all (~2 min)
+python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test (~1 min)
+```
+
+`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. The reference reproduces the original SUNDIALS 4.X results bit-for-bit. After an intentional change in results, regenerate it with `python tests/wgs.py` (run from a scratch directory; it writes compiled modules to the cwd) and explain the change in the commit message.
 
 See README.md for step-by-step SUNDIALS installation.
 
