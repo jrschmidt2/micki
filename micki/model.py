@@ -884,18 +884,30 @@ class Model(object):
         lapack = "-lmkl_rt"
         if "MICKI_LAPACK" in os.environ:
             lapack = os.environ["MICKI_LAPACK"]
+        # Location of the SUNDIALS installation; the Fortran 2003 interface
+        # module files (*.mod) are installed in its 'fortran' subdirectory.
+        sundials = ''
+        if "MICKI_SUNDIALS_DIR" in os.environ:
+            sdir = os.environ["MICKI_SUNDIALS_DIR"]
+            sundials = ('-I{0}/fortran -I{0}/include -L{0}/lib64 -L{0}/lib '
+                        ''.format(sdir))
         os.environ["CFLAGS"] = "-w -std=c99"
-        output=f2py.compile(program, modulename=modname, verbose=0, 
+        output=f2py.compile(program, modulename=modname, verbose=0,
                      full_output=1,
                      extra_args='--quiet '
                                 '--f90flags="-Wno-unused-dummy-argument '
-                                '-Wno-unused-variable -Wno-unused-func -w" ' 
-                                '-lsundials_fida '
-                                '-lsundials_fnvecserial '
+                                '-Wno-unused-variable -Wno-unused-func -w" '
+                                + sundials +
+                                '-lsundials_fida_mod '
                                 '-lsundials_ida '
-                                '-lsundials_fsunlinsollapackdense '
+                                '-lsundials_fnvecserial_mod '
+                                '-lsundials_nvecserial '
+                                '-lsundials_fsunmatrixdense_mod '
+                                '-lsundials_sunmatrixdense '
+                                '-lsundials_fsunlinsollapackdense_mod '
                                 '-lsundials_sunlinsollapackdense '
-                                '-lsundials_nvecserial ' + lapack + ' ' +
+                                '-lsundials_fcore_mod '
+                                '-lsundials_core ' + lapack + ' ' +
                                 os.path.join(dname, pyfname),
                      source_fn=os.path.join(dname, fname))
         if output.returncode != 0:

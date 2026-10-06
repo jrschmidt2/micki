@@ -14,9 +14,78 @@ f90_template = """module solve_ida
 
 end module solve_ida
 
+module ida_state
+
+   ! SUNDIALS objects. Kept separate from solve_ida so that f2py does not
+   ! need to know about them.
+   use, intrinsic :: iso_c_binding
+   use fsundials_core_mod
+   use fida_mod
+
+   implicit none
+
+   type(c_ptr) :: ctx = c_null_ptr
+   type(c_ptr) :: ida_mem = c_null_ptr
+   type(N_Vector), pointer :: sv_y => null(), sv_yp => null()
+   type(N_Vector), pointer :: sv_atol => null(), sv_id => null()
+   type(N_Vector), pointer :: sv_constr => null()
+   type(SUNMatrix), pointer :: sm_a => null()
+   type(SUNLinearSolver), pointer :: sls => null()
+
+contains
+
+   ! IDA residual callback; wraps fidaresfun
+   integer(c_int) function micki_resfn(t, sunvec_y, sunvec_yp, sunvec_r, &
+                                       user_data) result(ierr) bind(C)
+
+      real(c_double), value :: t
+      type(N_Vector) :: sunvec_y, sunvec_yp, sunvec_r
+      type(c_ptr), value :: user_data
+
+      real(c_double), pointer :: y(:), yp(:), r(:)
+      real*8 :: rpar(1)
+      integer :: ipar(1), reserr
+
+      y => FN_VGetArrayPointer(sunvec_y)
+      yp => FN_VGetArrayPointer(sunvec_yp)
+      r => FN_VGetArrayPointer(sunvec_r)
+
+      call fidaresfun(t, y, yp, r, ipar, rpar, reserr)
+      ierr = reserr
+
+   end function micki_resfn
+
+   subroutine free_ida()
+
+      integer(c_int) :: ier
+
+      if (c_associated(ida_mem)) call FIDAFree(ida_mem)
+      if (associated(sls)) ier = FSUNLinSolFree(sls)
+      if (associated(sm_a)) call FSUNMatDestroy(sm_a)
+      if (associated(sv_y)) call FN_VDestroy(sv_y)
+      if (associated(sv_yp)) call FN_VDestroy(sv_yp)
+      if (associated(sv_atol)) call FN_VDestroy(sv_atol)
+      if (associated(sv_id)) call FN_VDestroy(sv_id)
+      if (associated(sv_constr)) call FN_VDestroy(sv_constr)
+      if (c_associated(ctx)) ier = FSUNContext_Free(ctx)
+      ida_mem = c_null_ptr
+      ctx = c_null_ptr
+      nullify(sls, sm_a, sv_y, sv_yp, sv_atol, sv_id, sv_constr)
+
+   end subroutine free_ida
+
+end module ida_state
+
 subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
 
+   use, intrinsic :: iso_c_binding
+   use fsundials_core_mod
+   use fida_mod
+   use fnvector_serial_mod
+   use fsunmatrix_dense_mod
+   use fsunlinsol_lapackdense_mod
    use solve_ida, only: neq, iout, rout, y0, yp0, mas, diff, dypdr, dvacdy
+   use ida_state
 
    implicit none
 
@@ -26,10 +95,10 @@ subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
    real*8, intent(in) :: id_vec(neqin)
    real*8 :: constr_vec(neqin)
    real*8 :: t0, yptmp(neqin)
-   integer :: nthreads, iatol, ier
+   integer :: ier
    integer :: i
-   integer :: meth, itmeth
-   integer :: myid
+   integer(c_int32_t) :: n
+   real(c_double), pointer :: v(:)
 
    dypdr = 0
 {dypdrcalc}
@@ -37,7 +106,6 @@ subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
    dvacdy = 0
 {dvacdycalc}
 
-   iatol = 2
    constr_vec = 1.d0
 
    y0 = y0in
@@ -46,41 +114,63 @@ subroutine initialize(neqin, y0in, rtol, atol, ipar, rpar, id_vec)
    diff = id_vec
    mas = 0
    t0 = 0
-   meth = 2  ! 1 = Adams (nonstiff), 2 = BDF (stiff)
-   itmeth = 2  ! 1 = functional iteration, 2 = Newton iteration
 
    do i = 1, neq
       mas(i, i) = id_vec(i)
    enddo
 
-!   ! Calculate yp
+   ! Calculate yp
    call fidaresfun(0.d0, y0, yptmp, yp0, ipar, rpar, ier)
 
+   ! Release any solver left over from a previous call
+   call free_ida()
+
    ! initialize Sundials
-   call fnvinits(2, neq, ier)
+   ier = FSUNContext_Create(SUN_COMM_NULL, ctx)
+   n = int(neq, c_int32_t)
+
+   sv_y => FN_VNew_Serial(n, ctx)
+   v => FN_VGetArrayPointer(sv_y)
+   v = y0
+   sv_yp => FN_VNew_Serial(n, ctx)
+   v => FN_VGetArrayPointer(sv_yp)
+   v = yp0
+   sv_atol => FN_VNew_Serial(n, ctx)
+   v => FN_VGetArrayPointer(sv_atol)
+   v = atol(1:neq)
+   sv_id => FN_VNew_Serial(n, ctx)
+   v => FN_VGetArrayPointer(sv_id)
+   v = id_vec
+   sv_constr => FN_VNew_Serial(n, ctx)
+   v => FN_VGetArrayPointer(sv_constr)
+   v = constr_vec
+
    ! allocate memory
-   call fidamalloc(t0, y0, yp0, iatol, rtol, atol, iout, rout, ipar, rpar, ier)
+   ida_mem = FIDACreate(ctx)
+   ier = FIDAInit(ida_mem, c_funloc(micki_resfn), t0, sv_y, sv_yp)
+   ier = FIDASVtolerances(ida_mem, rtol, sv_atol)
    ! set maximum number of steps (default = 500)
-   call fidasetiin('MAX_NSTEPS', 50000, ier)
+   ier = FIDASetMaxNumSteps(ida_mem, 50000_c_long)
    ! set algebraic variables
-   call fidasetvin('ID_VEC', id_vec, ier)
+   ier = FIDASetId(ida_mem, sv_id)
    ! set constraints (all yi >= 0.)
-   call fidasetvin('CONSTR_VEC', constr_vec, ier)
+   ier = FIDASetConstraints(ida_mem, sv_constr)
 
-!Uncomment the following lines for Sundials 2.X
-!   call fidalapackdense(neq, ier)
-!   call fidalapackdensesetjac(1, ier)
-
-!Uncomment these lines for Sundials 4.X (and comment about the above)
-  call FSUNDenseMatInit(2, neq, neq, ier)
-  call FSUNLAPACKDENSEINIT(2, ier)
-  call FIDALSINIT(ier)
+   ! Dense LAPACK linear solver. No Jacobian function is attached, so IDA
+   ! uses its internal difference-quotient Jacobian (as micki did with
+   ! Sundials 4.X); fidadjac is currently unused.
+   sm_a => FSUNDenseMatrix(n, n, ctx)
+   sls => FSUNLinSol_LapackDense(sv_y, sm_a, ctx)
+   ier = FIDASetLinearSolver(ida_mem, sls, sm_a)
 
 end subroutine initialize
 
 subroutine find_steady_state(neqin, nrates, dt, maxiter, epsilon, t1, u1, du1, r1)
 
+   use, intrinsic :: iso_c_binding
+   use fida_mod
    use solve_ida, only: y0, yp0, iout, rout, rates, dypdr
+   use ida_state, only: ida_mem
 
    implicit none
 
@@ -94,28 +184,28 @@ subroutine find_steady_state(neqin, nrates, dt, maxiter, epsilon, t1, u1, du1, r
 
    real*8 :: tout, epsilon2
    real*8 :: dutmp(neqin), du0(neqin)
-   integer :: itask, ier
+   integer :: ier
    integer :: i
 
-   logical :: converged = .FALSE.
+   logical :: converged
 
+   converged = .FALSE.
    epsilon2 = epsilon**2
    i = 0
-   itask = 1
    tout = 0.0d0
    u1 = y0
    du1 = yp0
    t1 = 0.d0
    du0 = 0.d0
 
-   call fidacalcic(1, dt, ier)
+   ier = FIDACalcIC(ida_mem, IDA_YA_YDP_INIT, dt)
 
    do while (.not. converged)
       if (tout - t1 < dt * 0.01) then
          tout = tout + dt
       end if
 
-      call fidasolve(tout, t1, u1, du1, itask, ier)
+      call ida_step(tout, t1, u1, du1, ier)
 
       i = i + 1
 
@@ -152,12 +242,12 @@ subroutine solve(neqin, nrates, nt, tfinal, t1, u1, du1, r1)
    real*8, intent(out) :: r1(nrates, nt)
 
    real*8 :: dt, tout
-   integer :: itask, ier
+   integer :: ier
    integer :: i
 
-   itask = 1
    dt = tfinal / (nt - 1)
    tout = 0.0d0
+   t1 = 0
    u1 = 0
    du1 = 0
    u1(:, 1) = y0
@@ -167,12 +257,12 @@ subroutine solve(neqin, nrates, nt, tfinal, t1, u1, du1, r1)
    r1(:, 1) = rates
 
 
-!   call fidacalcic(1, dt, ier)
+!   ier = FIDACalcIC(ida_mem, IDA_YA_YDP_INIT, dt)
 
    do i = 2, nt
       tout = tout + dt
       do while (tout - t1(i) > dt * 0.01)
-         call fidasolve(tout, t1(i), u1(:, i), du1(:, i), itask, ier)
+         call ida_step(tout, t1(i), u1(:, i), du1(:, i), ier)
       end do
       r1(:, i) = rates
    end do
@@ -181,11 +271,41 @@ end subroutine solve
 
 subroutine finalize
 
+   use ida_state, only: free_ida
+
    implicit none
 
-   call fidafree
+   call free_ida()
 
 end subroutine finalize
+
+subroutine ida_step(tout, tret, u, du, ier)
+
+   ! Advance IDA to tout (IDA_NORMAL) and copy the solution into u, du.
+
+   use, intrinsic :: iso_c_binding
+   use fsundials_core_mod
+   use fida_mod
+   use solve_ida, only: neq
+   use ida_state, only: ida_mem, sv_y, sv_yp
+
+   implicit none
+
+   real*8, intent(in) :: tout
+   real*8, intent(out) :: tret, u(neq), du(neq)
+   integer, intent(out) :: ier
+
+   real(c_double) :: tr(1)
+   real(c_double), pointer :: v(:)
+
+   ier = FIDASolve(ida_mem, tout, tr, sv_y, sv_yp, IDA_NORMAL)
+   tret = tr(1)
+   v => FN_VGetArrayPointer(sv_y)
+   u = v
+   v => FN_VGetArrayPointer(sv_yp)
+   du = v
+
+end subroutine ida_step
 
 subroutine fidaresfun(tres, yin, ypin, res, ipar, rpar, reserr)
 
@@ -300,70 +420,6 @@ subroutine ratecalc(neqin, yin)
 
 end subroutine ratecalc
 
-subroutine fidajtimes(tres, yin, ypin, res, vin, fjv, cj, ewt, h, ipar, rpar, wk1, wk2, ier)
-
-   use solve_ida, only: neq
-
-   implicit none
-
-   real*8, intent(in) :: tres, yin(neq), ypin(neq), res(neq), vin(neq), cj, h
-   real*8 :: ewt(*), wk1(*), wk2(*), rpar(*), wk3(1)
-   integer :: ipar(*)
-   integer :: i
-
-   real*8, intent(out) :: fjv(neq)
-   integer, intent(out) :: ier
-
-   real*8 :: jac(neq, neq)
-
-   call fidadjac(neq, tres, yin, ypin, res, jac, cj, ewt, h, ipar, rpar, wk1, wk2, wk2, ier)
-
-   fjv = 0.d0
-
-   call dgemv('N', neq, neq, 1.d0, jac, neq, vin, 1, 0.d0, fjv, 1)
-
-end subroutine fidajtimes
-
-subroutine fidapsol(tres, yin, ypin, res, rvin, zv, cj, delta, ewt, ipar, rpar, wk1, ier)
-
-   use solve_ida, only: neq, jac
-
-   implicit none
-
-   real*8, intent(in) :: tres, yin(neq), ypin(neq), res(neq), rvin(neq)
-   real*8, intent(in) :: cj, delta, ewt(*), rpar(*)
-   integer, intent(in) :: ipar(*)
-
-   real*8 :: wk1(*)
-   integer :: ier
-
-   real*8, intent(out) :: zv(neq)
-
-   integer :: ipiv(neq)
-   integer :: i
-
-   zv = rvin
-   call dgesv(neq, 1, jac, neq, ipiv, zv, neq, ier)
-
-end subroutine fidapsol
-
-subroutine fidapset(tres, yin, ypin, res, cj, ewt, h, ipar, rpar, wk1, wk2, wk3, ier)
-
-   use solve_ida, only: neq, jac
-
-   implicit none
-
-   real*8, intent(in) :: tres, yin(neq), ypin(neq), res(neq)
-   real*8, intent(in) :: cj, ewt(*), h, rpar(*)
-   real*8 :: wk1(*), wk2(*), wk3(*)
-
-   integer, intent(in) :: ipar(*)
-
-   integer, intent(out) :: ier
-
-   call fidadjac(neq, tres, yin, ypin, res, jac, cj, ewt, h, ipar, rpar, wk1, wk2, wk3, ier)
-
-end subroutine fidapset
 
    """
 
