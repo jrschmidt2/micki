@@ -52,6 +52,11 @@ class IDASolver(object):
         self.dvacdy = np.array(dvacdy, dtype=float)
         self.id_vec = np.array(id_vec, dtype=float)
         self.mas = np.diag(self.id_vec)
+        # Conserved quantities (e.g. element balances when no species are
+        # fixed) make the steady-state equations singular; newton() is not
+        # used then.
+        self.has_conservation = (np.linalg.matrix_rank(self.dypdr)
+                                 < self.n)
 
         self._mem = None
 
@@ -157,7 +162,103 @@ class IDASolver(object):
         return (flag, tret, core.N_VGetNumpyArray(self._y).copy(),
                 core.N_VGetNumpyArray(self._yp).copy())
 
-    def find_steady_state(self, dt, maxiter, epsilon):
+    def find_steady_state(self, dt, maxiter, epsilon, method='hybrid'):
+        """Find the steady state, starting from the initial conditions.
+
+        method='hybrid' (default) solves the steady-state equations directly
+        with Newton's method (see newton()); if that fails, it integrates
+        in time (integrate_to_steady_state) and then polishes the result
+        with Newton. method='integrate' only integrates; it is also used when
+        the model has conserved quantities (has_conservation).
+
+        Returns t, y, dy/dt and the rates at the steady state. t is inf if
+        the steady state was found by Newton alone. self.steady_state_method
+        records which path was taken: 'newton', 'integrate+newton' or
+        'integrate'.
+        """
+        if method not in ('hybrid', 'integrate'):
+            raise ValueError("method must be 'hybrid' or 'integrate'")
+        if self.has_conservation:
+            method = 'integrate'
+        if method == 'hybrid':
+            y, converged = self.newton(self.y0)
+            if converged:
+                self.steady_state_method = 'newton'
+                dydt, _ = self.residual(y, np.zeros(self.n))
+                return np.inf, y, dydt, self.rates(y)
+        t, y, dydt, r = self.integrate_to_steady_state(dt, maxiter, epsilon)
+        self.steady_state_method = 'integrate'
+        if method == 'hybrid':
+            y_polished, converged = self.newton(y)
+            if converged:
+                self.steady_state_method = 'integrate+newton'
+                dydt, _ = self.residual(y_polished, np.zeros(self.n))
+                return t, y_polished, dydt, self.rates(y_polished)
+        return t, y, dydt, r
+
+    def newton(self, y_guess, xtol=1e-10, maxiter=50, floor=1e-30):
+        """Solve the steady-state equations dypdr . r(y) = 0 directly.
+
+        Newton's method on x = ln(y), which keeps all concentrations
+        positive and makes the problem well scaled even when they span many
+        orders of magnitude, with a backtracking line search on the
+        residual scaled by the gross flux through each species. Trial
+        points with negative vacancies are rejected. Converged when the
+        full Newton step changes every concentration by less than xtol
+        (relative); this is not limited by the rounding noise in the net
+        rates the way a test on |dy/dt| is.
+
+        Newton only converges from a reasonably close guess. Returns
+        (y, converged); a singular Jacobian also gives converged=False.
+        Not valid when there are conserved quantities (has_conservation),
+        since nothing constrains them.
+        """
+        def evaluate(x):
+            y = np.exp(x)
+            if self.nvac and np.any(
+                    np.asarray(self._vac(y), dtype=float) < 0):
+                return None
+            F, _ = self.residual(y, np.zeros(self.n))
+            J, _ = self.jacobian(y, 0.)
+            Jx = J * y                     # derivative w.r.t. ln(y)
+            # ~ gross flux through each species
+            scale = np.abs(Jx).max(axis=1)
+            if not np.all(np.isfinite(F)) or not np.all(scale > 0):
+                return None
+            return F, Jx, scale
+
+        x = np.log(np.maximum(np.array(y_guess, dtype=float), floor))
+        state = evaluate(x)
+        if state is None:
+            return np.exp(x), False
+        F, Jx, scale = state
+        for _ in range(maxiter):
+            try:
+                dx = np.linalg.solve(Jx, -F)
+            except np.linalg.LinAlgError:
+                return np.exp(x), False
+            if not np.all(np.isfinite(dx)):
+                return np.exp(x), False
+            if np.abs(dx).max() < xtol:
+                return np.exp(x + dx), True
+            # limit any single change to a factor of ~150 far from the
+            # solution, then backtrack until the scaled residual decreases
+            dx *= min(1., 5. / np.abs(dx).max())
+            phi = np.linalg.norm(F / scale)
+            lam = 1.
+            while lam > 1e-6:
+                trial = evaluate(x + lam * dx)
+                if trial is not None and (np.linalg.norm(trial[0] / scale)
+                                          < (1 - 1e-4 * lam) * phi):
+                    break
+                lam *= 0.5
+            else:
+                return np.exp(x), False
+            x = x + lam * dx
+            F, Jx, scale = trial
+        return np.exp(x), False
+
+    def integrate_to_steady_state(self, dt, maxiter, epsilon):
         """Integrate in steps of dt until max |dy/dt| < epsilon.
 
         dy/dt is taken from IDA's solution (y'), for the differential
@@ -186,7 +287,7 @@ class IDASolver(object):
             if i >= maxiter:
                 warnings.warn('Steady state not reached after {} steps '
                               '(t = {})'.format(maxiter, t1),
-                              RuntimeWarning, stacklevel=3)
+                              RuntimeWarning, stacklevel=4)
                 break
         self._warn_failures()
         return t1, u1, du1, self.rates(u1)

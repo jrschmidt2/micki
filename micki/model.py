@@ -819,8 +819,21 @@ class Model(object):
 
         return Ui, dUi, ri
 
-    def find_steady_state(self, dt=60, maxiter=2000, epsilon=1e-8):
-        t, U1, dU1, r1 = self._solver.find_steady_state(dt, maxiter, epsilon)
+    def find_steady_state(self, dt=60, maxiter=2000, epsilon=1e-8,
+                          method='hybrid'):
+        """Find the steady state starting from the initial conditions.
+
+        By default the steady-state equations are solved directly with
+        Newton's method, falling back to time integration (in steps of dt,
+        up to maxiter steps, until max |dy/dt| < epsilon) if Newton does
+        not converge from the initial conditions. method='integrate' only
+        integrates. self.steady_state_method records the path taken
+        ('newton', 'integrate+newton' or 'integrate'); the returned t is
+        inf when Newton alone was used.
+        """
+        t, U1, dU1, r1 = self._solver.find_steady_state(dt, maxiter, epsilon,
+                                                        method)
+        self.steady_state_method = self._solver.steady_state_method
         self.t = t
         self.U = []
         self.dU = []
@@ -849,6 +862,24 @@ class Model(object):
     def finalize(self):
         self.initialized = False
 
+    def _eval_rate_constant(self, k, symbol_to_coverage):
+        # Rate constants may depend on coverages (lateral interactions).
+        # Evaluating them with sympy's subs() is slow, so each expression is
+        # turned into a NumPy function once and cached.
+        if not isinstance(k, sym.Basic):
+            return float(k)
+        cache = self.__dict__.setdefault('_rate_constant_cache', {})
+        entry = cache.get(id(k))
+        if entry is None or entry[0] is not k:
+            symbols = sorted(k.free_symbols, key=str)
+            entry = (k, symbols, sym.lambdify(symbols, k, 'numpy'))
+            cache[id(k)] = entry
+        _, symbols, func = entry
+        try:
+            return float(func(*[symbol_to_coverage[x] for x in symbols]))
+        except KeyError:
+            return sym.sympify(k).subs(symbol_to_coverage)
+
     def check_rates(self, U, epsilon=1e-6):
         symbol_to_coverage = {}
         for name, Ui in U.items():
@@ -859,13 +890,13 @@ class Model(object):
             if species.label in U and species.symbol is not None:
                 symbol_to_coverage[species.symbol] = U[species.label]
 
+        kmax = _k * self.T / _hplanck
         for name, reaction in self.reactions.items():
-            kfor = sym.sympify(reaction.kfor).subs(symbol_to_coverage)
-            krev = sym.sympify(reaction.krev).subs(symbol_to_coverage)
-            kmax = _k * self.T / _hplanck
+            kfor = self._eval_rate_constant(reaction.kfor, symbol_to_coverage)
+            krev = self._eval_rate_constant(reaction.krev, symbol_to_coverage)
             for k, word in [(kfor, "Forwards"), (krev, "Reverse")]:
                 ratio = k / kmax
-                if (ratio - 1.0) > 1e-6:
+                if (ratio - 1.0) > epsilon:
                     warnings.warn(word + " rate constant for {} is too large! "
                                   "Value is {} kB T / h (should be <= 1)."
                                   "".format(reaction, ratio),
