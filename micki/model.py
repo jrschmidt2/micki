@@ -1029,7 +1029,8 @@ class Model(object):
                                   RuntimeWarning, stacklevel=2)
 
     def copy(self, initialize=True):
-        newmodel = Model(self.T, self.Asite, self.z, self.lattice, self.rhocat,
+        newmodel = Model(self.T, self.Asite, z=self.z, lattice=self.lattice,
+                         reactor=self.reactor, rhocat=self.rhocat,
                          analytic_jac=self.analytic_jac)
         newmodel.add_reactions(self.reactions)
         newmodel.set_fixed(self.fixed)
