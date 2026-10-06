@@ -507,7 +507,7 @@ class Model(object):
     def set_T(self, T):
         self._T = T
         for reaction in self._reactions:
-            reaction.update(T=T, Asite=self.Asite)
+            reaction.update(T=T, Asite=self.Asite, L=self.z)
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
@@ -519,7 +519,7 @@ class Model(object):
     def set_Asite(self, Asite):
         self._Asite = Asite
         for reaction in self._reactions:
-            reaction.update(T=self.T, Asite=Asite)
+            reaction.update(T=self.T, Asite=Asite, L=self.z)
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
@@ -530,9 +530,8 @@ class Model(object):
 
     def set_z(self, z):
         self._z = z
-        self.check_diffusion()
         for reaction in self._reactions:
-            reaction.update(L=z)
+            reaction.update(T=self.T, Asite=self.Asite, L=z)
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
