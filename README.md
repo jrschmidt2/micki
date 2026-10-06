@@ -13,8 +13,9 @@ written in Python.
 No compiler, SUNDIALS build or LAPACK library is needed: sundials4py ships
 prebuilt wheels that include SUNDIALS.
 
-Micki versions that generate and compile Fortran with the SUNDIALS FCMIX
-(4.X) interface are on the `sundials4` branch.
+Earlier versions that generate Fortran and compile it with f2py are kept on
+branches: `fortran-sundials7` (SUNDIALS 7 Fortran 2003 interface) and
+`sundials4` (SUNDIALS 4.X FCMIX interface).
 
 ### Detailed installation instructions:
 #create an environment with Python >= 3.12 (e.g. with venv or uv) and install the dependencies<br>

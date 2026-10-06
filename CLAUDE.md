@@ -11,7 +11,7 @@ There is no build system, packaging (`setup.py`), or linter config. The package 
 ## Dependencies / environment
 
 - Python ≥3.12, `sundials4py` (≥7.9, beta; wheels bundle SUNDIALS, so no compiler or LAPACK is needed), `numpy` ≥2, `sympy`, `ase`.
-- The `sundials4` branch holds the older implementation that generated Fortran, compiled it with f2py and linked SUNDIALS 4.X (FCMIX) + LAPACK.
+- Older implementations that generated Fortran, compiled it with f2py and linked SUNDIALS + LAPACK are on branches `fortran-sundials7` (SUNDIALS 7, F2003 interface; last Fortran version, includes all bug fixes and the regression test) and `sundials4` (SUNDIALS 4.X FCMIX).
 
 ## Tests
 
