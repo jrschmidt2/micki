@@ -40,7 +40,7 @@ Consequences to keep in mind:
 - `reactor='PFR'` zeroes the mass-matrix entries of adsorbates (algebraic, pseudo-steady-state); `'CSTR'` treats all variables as differential.
 - By default no Jacobian function is attached, so IDA uses its difference-quotient Jacobian (as the old Sundials 4.X/FCMIX version did). `Model(..., analytic_jac=True)` registers `IDASolver.jacobian` (dypdr·(∂r/∂y + ∂r/∂vac·∂vac/∂y) − c_j·M). `model._solver.residual(y, yp)` and `.jacobian(y, cj)` can be called directly, e.g. to check the Jacobian against finite differences.
 - The residual returns a recoverable error when any y < −1e-10; negative vacancies are clipped to 0 in the rates, and negative y and vacancies are clipped (with an error flag) in the Jacobian. These rules come from the original Fortran template.
-- `find_steady_state(epsilon=...)` stops when max |dy/dt| < epsilon. For the WGS model, rounding noise in dy/dt at steady state is ~1e-7 (near-equilibrium steps have fluxes ~1e8), so epsilon=1e-8 is below the noise floor: whether a condition "converges" is effectively random, and non-converged ones run all `maxiter` steps.
+- `find_steady_state(epsilon=...)` stops when max |dy/dt| < epsilon over the differential variables, with dy/dt taken from IDA's y′. Do not re-evaluate dy/dt from the rate expressions for this: near-equilibrium steps with fluxes ~1e8 give ~1e-8–1e-7 rounding noise, which made the old check (and the Fortran versions) run to `maxiter` at random.
 - If any rate expression (e.g. via `species.lateral`) refers to a species that is not in the model, `set_initial_conditions` raises `ValueError` naming the species and reactions; such symbols used to be silently set to 0.
 
 **Supporting modules**

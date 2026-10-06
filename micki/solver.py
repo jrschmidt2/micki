@@ -160,6 +160,12 @@ class IDASolver(object):
     def find_steady_state(self, dt, maxiter, epsilon):
         """Integrate in steps of dt until max |dy/dt| < epsilon.
 
+        dy/dt is taken from IDA's solution (y'), for the differential
+        variables only. Re-evaluating it from the rate expressions instead
+        is limited by cancellation between large forward and reverse fluxes
+        (rounding noise ~1e-8-1e-7 for typical surface kinetics), which can
+        keep the test from ever passing at steady state.
+
         Returns t, y, dy/dt and the rates at the final point.
         """
         tout = 0.
@@ -175,8 +181,7 @@ class IDASolver(object):
                 tout += dt
             _, t1, u1, du1 = self._step(tout)
             i += 1
-            dudt, _ = self.residual(u1, np.zeros(self.n))
-            if np.max(dudt**2) < epsilon**2:
+            if np.max(np.abs(du1 * self.id_vec)) < epsilon:
                 break
             if i >= maxiter:
                 warnings.warn('Steady state not reached after {} steps '
