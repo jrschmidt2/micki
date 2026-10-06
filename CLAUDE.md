@@ -4,28 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Micki is an object-oriented microkinetic modeling package in Python. Users build `Gas`/`Liquid`/`Adsorbate`/`Electron` species (thermochemistry from ASE `Atoms` + vibrational frequencies), combine them into `Reaction`s, add those to a `Model`, and integrate the resulting DAE system with SUNDIALS IDA via a Fortran module that is generated and compiled at runtime.
+Micki is an object-oriented microkinetic modeling package in Python. Users build `Gas`/`Liquid`/`Adsorbate`/`Electron` species (thermochemistry from ASE `Atoms` + vibrational frequencies), combine them into `Reaction`s, add those to a `Model`, and integrate the resulting DAE system with SUNDIALS IDA through the official Python interface, sundials4py.
 
 There is no build system, packaging (`setup.py`), or linter config. The package is used by putting the repo root on `PYTHONPATH` and running `import micki`.
 
 ## Dependencies / environment
 
-- Python 3 **with development headers** (`Python.h`; f2py builds a C extension at runtime), `ase`, `sympy`, and `numpy<2` (`numpy.f2py.compile` was removed in numpy 2.0; on Python ≥3.12 the distutils backend it relies on is also gone, so use Python ≤3.11)
-- A Fortran compiler usable by `numpy.f2py`
-- SUNDIALS ≥7.0 (tested with 7.9.0), built with `-DSUNDIALS_ENABLE_FORTRAN=ON -DSUNDIALS_ENABLE_LAPACK=ON -DSUNDIALS_INDEX_SIZE=32 -DCMAKE_POSITION_INDEPENDENT_CODE=ON`. The generated Fortran uses the Fortran 2003 interface (`fida_mod`, `fnvector_serial_mod`, ...); the `.mod` files must come from the same gfortran version that compiles micki's module. Set `MICKI_SUNDIALS_DIR` to the install prefix so f2py gets `-I$DIR/fortran -L$DIR/lib64`. Index size must be 32: the template passes `c_int32_t` lengths, and SUNDIALS' LAPACK solver passes its index type straight to LAPACK.
-- LAPACK: defaults to MKL (`-lmkl_rt`); override with the `MICKI_LAPACK` env var (e.g. `MICKI_LAPACK="-lmkl_gf_lp64 -lmkl_sequential -lmkl_core"`). Use an LP64 (32-bit integer) LAPACK to match `SUNDIALS_INDEX_SIZE=32`. SUNDIALS and LAPACK library dirs must be on both `LIBRARY_PATH` (link) and `LD_LIBRARY_PATH` (import).
-- Compiler/linker errors from f2py are mostly suppressed (`-w`, `--quiet`); a failed build surfaces only as `ModuleNotFoundError: No module named 'tmpXXXX'`. To see the real error, run `python -m numpy.f2py -c <pyf> solve_ida.f90 -l...` by hand on the `solve_ida.f90` left in the working directory.
+- Python ≥3.12, `sundials4py` (≥7.9, beta; wheels bundle SUNDIALS, so no compiler or LAPACK is needed), `numpy` ≥2, `sympy`, `ase`.
+- The `sundials4` branch holds the older implementation that generated Fortran, compiled it with f2py and linked SUNDIALS 4.X (FCMIX) + LAPACK.
 
 ## Tests
 
 ```
-python -m unittest discover -s tests -v                                   # all (~2 min)
-python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test (~1 min)
+python -m unittest discover -s tests -v                                   # all (~40 s)
+python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test (~20 s)
 ```
 
-`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. The reference reproduces the original SUNDIALS 4.X results bit-for-bit. After an intentional change in results, regenerate it with `python tests/wgs.py` (run from a scratch directory; it writes compiled modules to the cwd) and explain the change in the commit message.
-
-See README.md for step-by-step SUNDIALS installation.
+`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. The reference was generated with the original Fortran/SUNDIALS 4.X implementation; the current solver reproduces it to ~2e-10. After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
 
 ## Architecture
 
@@ -37,16 +32,16 @@ See README.md for step-by-step SUNDIALS installation.
 1. Reorders species (Liquid → Gas/Electron → Adsorbate); fixed species and the solvent are excluded from the ODE variables.
 2. Computes vacancy concentrations from site balances (and `Lattice` site ratios if provided).
 3. Builds symbolic rate expressions with sympy, substitutes fixed concentrations, and symbolically differentiates to get the Jacobian (`drdy`, `drdvac`).
-4. `setup_execs()` emits Fortran via `sym.fcode`, fills `f90_template`/`pyf_template` from `fortran.py`, compiles with `numpy.f2py.compile` (linking SUNDIALS + LAPACK) in a temp dir, imports the module by its random name, and then deletes the `.so`.
-5. Calls the Fortran `initialize`; `solve(t, ncp)` and `find_steady_state()` call into the compiled module and convert arrays back to dicts keyed by species/reaction name.
+4. Builds an `IDASolver` (`solver.py`): the rate, vacancy and derivative expressions become NumPy functions via `sympy.lambdify(..., cse=True)`, and IDA (dense `SUNLinSol_Dense`) is set up with the residual F = dypdr·r(y, vac(y)) − id·y′ as a Python callback.
+5. `solve(t, ncp)` and `find_steady_state()` call into the `IDASolver` and convert arrays back to dicts keyed by species/reaction name.
 
 Consequences to keep in mind:
-- Changing T, Asite, z, or lattice on an initialized model re-runs `set_initial_conditions` (i.e. recompiles).
-- `setup_execs()` writes `solve_ida.f90` into the **current working directory** as a debugging aid; inspect it when the generated Fortran fails to compile. f2py stderr is printed only on failure.
+- Changing T, Asite, z, or lattice on an initialized model re-runs `set_initial_conditions` (rebuilding the symbolic expressions and the solver).
 - `reactor='PFR'` zeroes the mass-matrix entries of adsorbates (algebraic, pseudo-steady-state); `'CSTR'` treats all variables as differential.
-- SUNDIALS handles live in the `ida_state` Fortran module (not exposed through the `.pyf`); `micki_resfn` is the `bind(C)` residual callback wrapping `fidaresfun`. By default no Jacobian function is attached, so IDA uses its difference-quotient Jacobian (as the old Sundials 4.X/FCMIX version did). `Model(..., analytic_jac=True)` registers `micki_jacfn`, which wraps the symbolically derived `fidadjac`. `calc_res`/`calc_jac` are exposed on the compiled module (`model._solve_ida`) for checking the Jacobian against finite differences.
+- By default no Jacobian function is attached, so IDA uses its difference-quotient Jacobian (as the old Sundials 4.X/FCMIX version did). `Model(..., analytic_jac=True)` registers `IDASolver.jacobian` (dypdr·(∂r/∂y + ∂r/∂vac·∂vac/∂y) − c_j·M). `model._solver.residual(y, yp)` and `.jacobian(y, cj)` can be called directly, e.g. to check the Jacobian against finite differences.
+- The residual returns a recoverable error when any y < −1e-10; negative vacancies are clipped to 0 in the rates, and negative y and vacancies are clipped (with an error flag) in the Jacobian. These rules come from the original Fortran template.
+- `find_steady_state(epsilon=...)` stops when max |dy/dt| < epsilon. For the WGS model, rounding noise in dy/dt at steady state is ~1e-7 (near-equilibrium steps have fluxes ~1e8), so epsilon=1e-8 is below the noise floor: whether a condition "converges" is effectively random, and non-converged ones run all `maxiter` steps.
 - If any rate expression (e.g. via `species.lateral`) refers to a species that is not in the model, `set_initial_conditions` raises `ValueError` naming the species and reactions; such symbols used to be silently set to 0.
-- `CFLAGS="-w -std=c99"` is set as a gcc workaround.
 
 **Supporting modules**
 - `analysis.py: ModelAnalysis` — steady-state analysis: Campbell degree of rate control, thermodynamic rate control, apparent activation barrier, reaction orders (finite differences on `scale`/T/concentrations).

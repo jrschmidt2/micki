@@ -9,7 +9,8 @@ Running this file regenerates the reference data used by test_wgs.py:
     python tests/wgs.py
 
 Only do that after an intentional change in results, and say why in the
-commit message.
+commit message. The current reference was generated with the original
+Fortran/SUNDIALS 4.X implementation (commit bb8aa7d).
 """
 
 import json
@@ -169,9 +170,6 @@ def run_all(analytic_jac=False):
 
 
 if __name__ == '__main__':
-    # Compiled solver modules are written to and imported from the
-    # current directory.
-    sys.path.insert(0, os.getcwd())
     results = run_all()
     with open(REFERENCE, 'w') as f:
         json.dump(results, f, indent=1)

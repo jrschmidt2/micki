@@ -2,10 +2,6 @@
 
 from __future__ import print_function
 
-import os
-import glob
-import tempfile
-import shutil
 import warnings
 
 from collections import OrderedDict
@@ -20,6 +16,7 @@ from micki.reactants import _Thermo, _Fluid, _Reactants, Gas, Liquid, Adsorbate
 from micki.reactants import Electron
 
 from micki.lattice import Lattice
+from micki.solver import IDASolver
 
 
 class Reaction(object):
@@ -766,11 +763,17 @@ class Model(object):
             for j, vac in enumerate(self.vacancy):
                 self.drdvac[i, j] = sym.diff(rate, vac.symbol)
 
-        # Sets up and compiles the Fortran differential equation solving module
-        self.setup_execs()
+        # Vacancy concentrations as functions of the variable species
+        # (fixed species replaced by their concentrations)
+        vac_exprs = [sym.sympify(expr).subs(subs) for expr in self.vac_sym]
 
-        # Convert the dictionary U0 of initial conditions into a list that can
-        # be used with the Fortran module.
+        self._solver = IDASolver(self.symbols,
+                                 [vac.symbol for vac in self.vacancy],
+                                 vac_exprs, self.rates, self.drdy,
+                                 self.drdvac, self.dypdr, self.dvacdy,
+                                 algvar)
+
+        # Initial values of the variable species, in solver order
         U0 = []
         for symbol in self.symbols:
             for species, isymbol in self.symbols_dict.items():
@@ -778,171 +781,12 @@ class Model(object):
                     U0.append(self.U0[species.label])
                     break
 
-        # Pass initial values to the fortran module
         atol = np.array([1e-32] * self.nvariables)
         atol += 1e-16 * algvar
-        self.finitialize(U0, 1e-10, atol, [], [], algvar,
-                         int(self.analytic_jac))
+        self._solver.initialize(U0, 1e-10, atol,
+                                analytic_jac=self.analytic_jac)
 
         self.initialized = True
-
-    def setup_execs(self):
-        from micki.fortran import f90_template, pyf_template
-        from numpy import f2py
-
-        # y_vec is an array symbol that will represent the species
-        # concentrations provided by the differential equation solver inside
-        # the Fortran code (that is, y_vec is an INPUT to the functions that
-        # calculate the residual, Jacobian, and rate)
-        y_vec = sym.IndexedBase('y', shape=(self.nvariables,))
-        vac_vec = sym.IndexedBase('vac', shape=(len(self.vacancy),))
-        # Map y_vec elements (1-indexed, of course) onto 'modelparam' symbols
-        trans = {self.symbols[i]: y_vec[i + 1] for i in range(self.nvariables)}
-        trans.update({vac.symbol: y_vec[i + 1] for i, vac in enumerate(self.vacancy)})
-        # Map string represntation of 'modelparam' symbols onto string
-        # representation of y-vec elements
-        str_trans = {}
-        for i, symbol in enumerate(self.symbols):
-            str_trans[sym.fcode(symbol, source_format='free')] = \
-                    sym.fcode(y_vec[i + 1], source_format='free')
-        for i, vac in enumerate(self.vacancy):
-            str_trans[sym.fcode(vac.symbol, source_format='free')] = \
-                    sym.fcode(vac_vec[i + 1], source_format='free')
-        
-        str_list = [key for key in str_trans]
-        str_list.sort(key=len, reverse=True)
-
-        # these will contain lists of strings, with each element being one
-        # Fortran assignment for the master equation, Jacobian, and
-        # rate expressions
-        dypdrcode = []
-        drdycode = []
-        ratecode = []
-        vaccode = []
-        drdvaccode = []
-        dvacdycode = []
-
-        for i, expr in enumerate(self.vac_sym):
-            fcode = sym.fcode(expr, source_format='free')
-            for key in str_list:
-                fcode = fcode.replace(key, str_trans[key])
-            vaccode.append('   vac({}) = '.format(i + 1) + fcode)
-
-        for i, row in enumerate(self.drdvac):
-            for j, elem in enumerate(row):
-                if elem != 0:
-                    fcode = sym.fcode(elem, source_format='free')
-                    for key in str_list:
-                        fcode = fcode.replace(key, str_trans[key])
-                    drdvaccode.append('   drdvac({}, {}) = '.format(i + 1, j + 1) + fcode)
-        
-        for i, row in enumerate(self.dvacdy):
-            for j, elem in enumerate(row):
-                if elem != 0:
-                    dvacdycode.append('   dvacdy({}, {}) = '.format(i+1, j+1) + sym.fcode(elem, source_format='free'))
-
-        for i, row in enumerate(self.dypdr):
-            for j, elem in enumerate(row):
-                if elem != 0:
-                    dypdrcode.append('   dypdr({}, {}) = '.format(i+1, j+1) + sym.fcode(elem, source_format='free'))
-
-        # Effectively the same as above, except on the two-dimensional Jacobian
-        # matrix.
-        for i, row in enumerate(self.drdy):
-            for j, elem in enumerate(row):
-                if elem != 0:
-                    fcode = sym.fcode(elem, source_format='free')
-                    for key in str_list:
-                        fcode = fcode.replace(key, str_trans[key])
-                    drdycode.append('   drdy({}, {}) = '.format(i + 1, j + 1) + fcode)
-
-        # See residual above
-        for i, rate in enumerate(self.rates):
-            fcode = sym.fcode(rate, source_format='free')
-            for key in str_list:
-                fcode = fcode.replace(key, str_trans[key])
-            ratecode.append('   rates({}) = '.format(i + 1) + fcode)
-
-        # We insert all of the parameters of this differential equation into
-        # the prewritten Fortran template, including the residual, Jacobian,
-        # and rate expressions we just calculated.
-        program = f90_template.format(neq=self.nvariables, nx=1,
-                                      nrates=len(self.rates),
-                                      nvac=len(self.vacancy),
-                                      dypdrcalc='\n'.join(dypdrcode),
-                                      drdycalc='\n'.join(drdycode),
-                                      ratecalc='\n'.join(ratecode),
-                                      vaccalc='\n'.join(vaccode),
-                                      drdvaccalc='\n'.join(drdvaccode),
-                                      dvacdycalc='\n'.join(dvacdycode),
-                                      )
-
-        # Generate a randomly-named temp directory for compiling the module.
-        # We will name the actual module file after the directory.
-        dname = tempfile.mkdtemp()
-        modname = os.path.split(dname)[1]
-        fname = modname + '.f90'
-        pyfname = modname + '.pyf'
-
-        # For debugging purposes, write out the generated module
-        with open('solve_ida.f90', 'w') as f:
-            f.write(program)
-
-        # Write the pertinent data into the temp directory
-        with open(os.path.join(dname, pyfname), 'w') as f:
-            f.write(pyf_template.format(modname=modname, neq=self.nvariables,
-                    nrates=len(self.rates), nvac=len(self.vacancy)))
-
-        # Compile the module with f2py
-        lapack = "-lmkl_rt"
-        if "MICKI_LAPACK" in os.environ:
-            lapack = os.environ["MICKI_LAPACK"]
-        # Location of the SUNDIALS installation; the Fortran 2003 interface
-        # module files (*.mod) are installed in its 'fortran' subdirectory.
-        sundials = ''
-        if "MICKI_SUNDIALS_DIR" in os.environ:
-            sdir = os.environ["MICKI_SUNDIALS_DIR"]
-            sundials = ('-I{0}/fortran -I{0}/include -L{0}/lib64 -L{0}/lib '
-                        ''.format(sdir))
-        os.environ["CFLAGS"] = "-w -std=c99"
-        output=f2py.compile(program, modulename=modname, verbose=0,
-                     full_output=1,
-                     extra_args='--quiet '
-                                '--f90flags="-Wno-unused-dummy-argument '
-                                '-Wno-unused-variable -Wno-unused-func -w" '
-                                + sundials +
-                                '-lsundials_fida_mod '
-                                '-lsundials_ida '
-                                '-lsundials_fnvecserial_mod '
-                                '-lsundials_nvecserial '
-                                '-lsundials_fsunmatrixdense_mod '
-                                '-lsundials_sunmatrixdense '
-                                '-lsundials_fsunlinsollapackdense_mod '
-                                '-lsundials_sunlinsollapackdense '
-                                '-lsundials_fcore_mod '
-                                '-lsundials_core ' + lapack + ' ' +
-                                os.path.join(dname, pyfname),
-                     source_fn=os.path.join(dname, fname))
-        if output.returncode != 0:
-            print(output.stderr)
-        # Delete the temporary directory
-        shutil.rmtree(dname)
-
-        # Import the module on-the-fly with __import__. This is kind of a hack.
-        solve_ida = __import__(modname)
-        self._solve_ida = solve_ida
-
-        # The Fortran module's initialize, solve, and finalize routines
-        # are mapped onto finitialize, fsolve, and ffinalize inside the Model
-        # object. We don't want users touching these manually
-        self.finitialize = solve_ida.initialize
-        self.ffind_steady_state = solve_ida.find_steady_state
-        self.fsolve = solve_ida.solve
-        self.ffinalize = solve_ida.finalize
-
-        # Delete the module file. We've already imported it, so it's in memory.
-        library=glob.glob(modname + '*.so')[0]
-        os.remove(library)
 
     def _out_array_to_dict(self, U, dU, r):
         Ui = {}
@@ -976,16 +820,12 @@ class Model(object):
         return Ui, dUi, ri
 
     def find_steady_state(self, dt=60, maxiter=2000, epsilon=1e-8):
-        t, U1, dU1, r1 = self.ffind_steady_state(self.nvariables,
-                                                 len(self.rates),
-                                                 dt,
-                                                 maxiter,
-                                                 epsilon)
+        t, U1, dU1, r1 = self._solver.find_steady_state(dt, maxiter, epsilon)
         self.t = t
         self.U = []
         self.dU = []
         self.r = []
-        U, dU, r = self._out_array_to_dict(U1.T, dU1.T, r1.T)
+        U, dU, r = self._out_array_to_dict(U1, dU1, r1)
         self.U.append(U)
         self.dU.append(dU)
         self.r.append(r)
@@ -993,11 +833,7 @@ class Model(object):
         return t, U, r
 
     def solve(self, t, ncp):
-        self.t, U1, dU1, r1 = self.fsolve(self.nvariables,
-                                          len(self.rates), ncp, t)
-        self.U1 = U1.T
-        self.dU1 = dU1.T
-        self.r1 = r1.T
+        self.t, self.U1, self.dU1, self.r1 = self._solver.solve(ncp, t)
         self.U = []
         self.dU = []
         self.r = []
@@ -1012,7 +848,6 @@ class Model(object):
 
     def finalize(self):
         self.initialized = False
-#        self.ffinalize()
 
     def check_rates(self, U, epsilon=1e-6):
         symbol_to_coverage = {}
