@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Micki is an object-oriented microkinetic modeling package in Python. Users build `Gas`/`Liquid`/`Adsorbate`/`Electron` species (thermochemistry from ASE `Atoms` + vibrational frequencies), combine them into `Reaction`s, add those to a `Model`, and integrate the resulting DAE system with SUNDIALS IDA through the official Python interface, sundials4py.
 
-There is no build system, packaging (`setup.py`), or linter config. The package is used by putting the repo root on `PYTHONPATH` and running `import micki`.
+Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3.12 environment. There is no linter config; `python -m pyflakes micki tests` is clean.
 
 ## Dependencies / environment
 
