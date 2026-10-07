@@ -23,6 +23,7 @@ from micki import (Model, Reaction, Gas, Liquid, Electron,  # noqa: E402
                    EnergyReference, Lattice)
 from micki.db import read_from_db  # noqa: E402
 from micki.utils import calculate_avg_vdw_radius  # noqa: E402
+from ase.units import kB, _k, _hplanck  # noqa: E402
 
 
 class ModelTest(unittest.TestCase):
@@ -230,6 +231,135 @@ class ModelTest(unittest.TestCase):
         h2 = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]])
         h2.calc = SinglePointCalculator(h2, energy=-6.8)
         self.assertAlmostEqual(EnergyReference([h2])['H'], -3.4)
+
+
+class ReactionOptionsTest(unittest.TestCase):
+    """clip, alpha and explicit_ts (CatMap-style conventions)."""
+
+    T = 548.
+
+    @classmethod
+    def setUpClass(cls):
+        warnings.simplefilter('ignore')
+
+    def setUp(self):
+        self.sp = wgs.build_species()
+        self.kT = kB * self.T
+
+    def _update(self, rxn):
+        rxn.update(T=self.T, Asite=wgs.ASITE, L=0)
+        return rxn
+
+    def _at(self, expr, **cov):
+        # value of expr at the given coverages (others 0)
+        expr = sympy.sympify(expr)
+        subs = {s: cov.get(s.name, 0.) for s in expr.free_symbols}
+        return float(expr.subs(subs))
+
+    def test_invalid_options(self):
+        sp = self.sp
+        with self.assertRaisesRegex(ValueError, 'zero_coverage'):
+            Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=sp['o-co'],
+                     dground=True)
+        for kw in ({'clip': 'always'}, {'alpha': 1.5},
+                   {'alpha': 0.5, 'explicit_ts': True}):
+            with self.assertRaises(ValueError):
+                Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=sp['o-co'], **kw)
+        for kw in ({'alpha': 0.5}, {'explicit_ts': True},
+                   {'clip': 'zero_coverage'}):
+            with self.assertRaises(ValueError):
+                Reaction(sp['co_g'], sp['co'], **kw)
+        with self.assertRaises(ValueError):
+            Reaction(sp['co_g'], sp['co'], method='DIEQUIL', clip='coverage')
+
+    def test_clip_coverage_equil_and_stick(self):
+        # CatMap: barrierless kfor = kT/h exp(-max(0, dG)/kT), and the
+        # non-activated (collision theory) prefactor times the same factor;
+        # at high CO coverage, CO adsorption becomes endergonic
+        sp = self.sp
+        sp['co_g'].pref = 1.
+        equil = self._update(Reaction(sp['co_g'], sp['co'], method='EQUIL',
+                                      clip='coverage'))
+        stick = self._update(Reaction(sp['co_g'], sp['co'], method='STICK',
+                                      clip='coverage'))
+        stick0 = self._update(Reaction(sp['co_g'], sp['co'], method='STICK'))
+        ref = sp['co_g'].get_reference_state()
+        signs = set()
+        for theta in (0.1, 0.8):
+            dG = self._at(equil.dG, co=theta)
+            signs.add(dG > 0)
+            factor = np.exp(-max(dG, 0.) / self.kT)
+            k = _k * self.T / _hplanck * factor / ref
+            self.assertAlmostEqual(self._at(equil.kfor, co=theta) / k, 1.,
+                                   places=12)
+            self.assertAlmostEqual(
+                self._at(stick.kfor, co=theta)
+                / (self._at(stick0.kfor, co=theta) * factor), 1., places=12)
+            for rxn in (equil, stick):
+                self.assertAlmostEqual(
+                    self._at(rxn.kfor / rxn.krev, co=theta)
+                    / self._at(rxn.keq, co=theta), 1., places=12)
+        self.assertEqual(signs, {True, False})
+
+    def test_clip_coverage_tst(self):
+        # forward barrier max(dG_act, dG, 0), with an explicit transition
+        # state lying below the final state
+        sp = self.sp
+        ts = sp['o-co']
+        ts.dE = -2.
+        rxn = Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=ts,
+                       explicit_ts=True, clip='coverage')
+        self._update(rxn)
+        for theta in (0., 0.5):
+            dG_act = self._at(rxn.dG_act, co=theta)
+            dG = self._at(rxn.dG, co=theta)
+            barrier = max(dG_act, dG, 0.)
+            self.assertGreater(barrier, dG_act)
+            k = _k * self.T / _hplanck * np.exp(-barrier / self.kT)
+            self.assertAlmostEqual(self._at(rxn.kfor, co=theta) / k, 1.,
+                                   places=12)
+        # without clip the negative barrier is an error
+        with self.assertRaises(RuntimeError):
+            self._update(Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=ts,
+                                  explicit_ts=True))
+
+    def test_clip_zero_coverage(self):
+        # the former dground: chosen at zero coverage, then kept. Shifts of
+        # the TS itself are caught by the raw-barrier check; a reactant
+        # shifted up by 3 eV, with a TS following the products, pushes the
+        # barrier below 0
+        sp = self.sp
+        sp['co'].dE += 3.
+        rxn = Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=sp['o-co'],
+                       alpha=1.)
+        self.assertLess(self._at(self._update(rxn).dG_act), 0.)
+        rxn = self._update(Reaction(sp['co'] + sp['o'], sp['co2_g'],
+                                    ts=sp['o-co'], alpha=1.,
+                                    clip='zero_coverage'))
+        self.assertEqual(rxn.dG_act, 0.)
+
+    def test_alpha_and_explicit_ts(self):
+        # G_TS = G_TS,own + (1 - alpha) dE_reactants + alpha dE_products,
+        # dE = lateral + energy shift; explicit_ts: G_TS,own only
+        sp = self.sp
+        ts = sp['ho-h']
+        ts.lateral = 0.3 * sp['co'].symbol
+        react, prod = sp['h2o'], sp['oh'] + sp['h']
+        dEr = react.lateral + react.dE
+        dEp = sum(s.lateral + s.dE for s in prod)
+        base = Reaction(react, prod, ts=ts, alpha=0.)
+        self._update(base)
+        for kw, shift in [({'alpha': 0.}, 0.), ({'alpha': 1.}, dEp - dEr),
+                          ({'alpha': 0.3}, 0.3 * (dEp - dEr)),
+                          ({'explicit_ts': True}, -dEr)]:
+            rxn = self._update(Reaction(react, prod, ts=ts, **kw))
+            for theta in (0., 0.4):
+                self.assertAlmostEqual(
+                    self._at(rxn.dG_act - base.dG_act, co=theta),
+                    self._at(shift, co=theta), places=12, msg=kw)
+        # the default computes alpha, between 0 and 1
+        rxn = self._update(Reaction(react, prod, ts=ts))
+        self.assertTrue(0. < float(rxn.alpha) < 1.)
 
 
 class LatticeTest(unittest.TestCase):

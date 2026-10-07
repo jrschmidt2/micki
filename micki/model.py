@@ -16,9 +16,56 @@ from micki.lattice import Lattice
 from micki.solver import IDASolver
 
 
+def _at_zero_coverage(expr):
+    """Value of a (possibly coverage-dependent) expression at zero
+    coverage, as a float."""
+    if isinstance(expr, sym.Basic):
+        expr = expr.subs({symbol: 0 for symbol in expr.free_symbols})
+    return float(expr)
+
+
 class Reaction:
+    """Elementary step reactants <-> products.
+
+    ts: transition state species, rate law method='TST' by default (else
+    'EQUIL'). Its free energy follows the coverage-dependent energy
+    corrections (lateral interactions and dE) of the reactants and products
+    as G_TS + (1 - alpha) sum_reactants + alpha sum_products, where alpha is
+    computed self-consistently from the forward and reverse barriers (Hermes
+    thesis eqs. 3.58-3.60) unless given. With explicit_ts=True only the TS's
+    own energy (including ts.lateral) is used.
+
+    clip: how negative barriers are handled. None: an error for a negative
+    barrier at zero coverage (before dE shifts and lateral interactions).
+    'zero_coverage' (TST only): at zero coverage, a negative forward
+    barrier is set to 0 and a negative reverse barrier makes the forward
+    barrier dG; the choice is then kept for all coverages (a forward
+    barrier set to 0 loses its coverage dependence). 'coverage' (TST,
+    EQUIL, STICK, or a given dG_act): the forward barrier is
+    Max(dG_act, dG, 0) at the current coverages, i.e. the transition state
+    is raised to the higher of the initial and final states, as in CatMap;
+    EQUIL then has the barrier Max(dG, 0) and STICK the collision rate
+    times exp(-Max(dG, 0)/kT). dG refers to the reference states of the
+    species (see Gas(..., pref=...)). krev = kfor / keq in all cases.
+    """
+
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
-                 dG_act=None, dground=False, reversible=True):
+                 dG_act=None, dground=False, reversible=True, clip=None,
+                 alpha=None, explicit_ts=False):
+        if dground:
+            raise ValueError("dground has been replaced by "
+                             "clip='zero_coverage'")
+        if clip not in (None, 'zero_coverage', 'coverage'):
+            raise ValueError("clip must be None, 'zero_coverage' or "
+                             "'coverage', not {!r}".format(clip))
+        if alpha is not None and not 0. <= alpha <= 1.:
+            raise ValueError('alpha must be between 0 and 1')
+        if alpha is not None and explicit_ts:
+            raise ValueError('Give either alpha or explicit_ts, not both')
+        if ts is None and (alpha is not None or explicit_ts
+                           or clip == 'zero_coverage'):
+            raise ValueError("alpha, explicit_ts and clip='zero_coverage' "
+                             "require a transition state")
 
         # Wrap reactants and products in _Reactants type. _Reactants passed
         # in are copied, since bare sites may be added to them below.
@@ -170,7 +217,13 @@ class Reaction:
         self.Nfluid = self.Nreact_fluid + self.Nprod_fluid
         self.Nads = self.Nreact_ads + self.Nprod_ads
 
-        self.dground = dground
+        self.clip = clip
+        self.alpha_fixed = alpha
+        self.explicit_ts = explicit_ts
+        if clip == 'coverage' and self.method not in ('TST', 'EQUIL',
+                                                      'STICK'):
+            raise ValueError("clip='coverage' is only implemented for the "
+                             "TST, EQUIL and STICK rate laws")
 
     def _check_scale_param(self, param):
         if param not in self.scale:
@@ -209,33 +262,45 @@ class Reaction:
             dEr = np.sum([species.lateral + species.dE for species in self.reactants])
             dEp = np.sum([species.lateral + species.dE for species in self.products])
 
-            dGf = Gts - Gr + dEr
-            dGr = Gts - Gp + dEp
+            # barriers without dE shifts and coverage dependence
+            ts_lateral = sum(species.lateral for species in self.ts)
+            dGf = _at_zero_coverage(Gts - Gr + dEr - ts_lateral)
+            dGr = _at_zero_coverage(Gts - Gp + dEp - ts_lateral)
 
-            if dGf < 0:
-                raise RuntimeError('Reaction {} has negative forwards activation barrier!'.format(self))
-            if dGr < 0:
-                raise RuntimeError('Reaction {} has negative reverse activation barrier!'.format(self))
+            computed_alpha = self.alpha_fixed is None and not self.explicit_ts
+            if computed_alpha or self.clip != 'coverage':
+                if dGf < 0:
+                    raise RuntimeError('Reaction {} has negative forwards activation barrier!'.format(self))
+                if dGr < 0:
+                    raise RuntimeError('Reaction {} has negative reverse activation barrier!'.format(self))
 
-            all_symbols = set()
-            all_symbols.update(sym.sympify(dEr).atoms(sym.Symbol))
-            all_symbols.update(sym.sympify(dEp).atoms(sym.Symbol))
-
-            # is_zero, not == 0: sympy >= 1.13 has Float(0.0) != 0
-            if sym.sympify(dEp - dEr).subs({symbol: 0 for symbol in all_symbols}).is_zero:
-                self.alpha = dGf / (dGf + dGr)
+            if self.explicit_ts:
+                self.alpha = None
+                shift = 0.
+            elif self.alpha_fixed is not None:
+                self.alpha = self.alpha_fixed
+                shift = (1 - self.alpha) * dEr + self.alpha * dEp
             else:
-                a1 = (2*dEp - 2*dEr - dGf - dGr - sym.sqrt(8*(dEp-dEr)*dGf + (-2*dEp + 2*dEr + dGf + dGr)**2))/(4*(dEp-dEr))
-                a1 = sym.sympify(a1).subs({symbol: 0 for symbol in all_symbols})
-                if isinstance(a1, sym.Float) and 0. <= a1 <= 1:
-                    self.alpha = a1
-                else:
-                    a2 = (2*dEp - 2*dEr - dGf - dGr + sym.sqrt(8*(dEp-dEr)*dGf + (-2*dEp + 2*dEr + dGf + dGr)**2))/(4*(dEp-dEr))
-                    self.alpha = sym.sympify(a2).subs({symbol: 0 for symbol in all_symbols})
-                    if not isinstance(self.alpha, sym.Float) or not (0. <= self.alpha <= 1.):
-                        raise RuntimeError("Couldn't find alpha parameter for {}!".format(self))
+                all_symbols = set()
+                all_symbols.update(sym.sympify(dEr).atoms(sym.Symbol))
+                all_symbols.update(sym.sympify(dEp).atoms(sym.Symbol))
 
-            self.dH_act = self.ts.get_H(T) + (1 - self.alpha) * dEr + self.alpha * dEp - self.reactants.get_H(T)
+                # is_zero, not == 0: sympy >= 1.13 has Float(0.0) != 0
+                if sym.sympify(dEp - dEr).subs({symbol: 0 for symbol in all_symbols}).is_zero:
+                    self.alpha = dGf / (dGf + dGr)
+                else:
+                    a1 = (2*dEp - 2*dEr - dGf - dGr - sym.sqrt(8*(dEp-dEr)*dGf + (-2*dEp + 2*dEr + dGf + dGr)**2))/(4*(dEp-dEr))
+                    a1 = sym.sympify(a1).subs({symbol: 0 for symbol in all_symbols})
+                    if isinstance(a1, sym.Float) and 0. <= a1 <= 1:
+                        self.alpha = a1
+                    else:
+                        a2 = (2*dEp - 2*dEr - dGf - dGr + sym.sqrt(8*(dEp-dEr)*dGf + (-2*dEp + 2*dEr + dGf + dGr)**2))/(4*(dEp-dEr))
+                        self.alpha = sym.sympify(a2).subs({symbol: 0 for symbol in all_symbols})
+                        if not isinstance(self.alpha, sym.Float) or not (0. <= self.alpha <= 1.):
+                            raise RuntimeError("Couldn't find alpha parameter for {}!".format(self))
+                shift = (1 - self.alpha) * dEr + self.alpha * dEp
+
+            self.dH_act = self.ts.get_H(T) + shift - self.reactants.get_H(T)
             self.dH_act *= self.scale['dH_act']
             self.dS_act = self.ts.get_S(T) - self.reactants.get_S(T)
             self.dS_act *= self.scale['dS_act']
@@ -243,27 +308,15 @@ class Reaction:
 
             # If there is a coverage dependence, assume everything has
             # coverage 0
-            if self.dground:
-                dG_act = self.dG_act
-                if isinstance(dG_act, sym.Basic):
-                    subs = {}
-                    for atom in dG_act.atoms(sym.Symbol):
-                        subs[atom] = 0.
-                    dG_act = dG_act.subs(subs)
-
+            if self.clip == 'zero_coverage':
+                dG_act = _at_zero_coverage(self.dG_act)
                 if dG_act < 0.:
                     warnings.warn('Negative activation energy found for {}. '
                                   'Rounding to 0.'.format(self),
                                   RuntimeWarning, stacklevel=2)
                     self.dG_act = 0.
 
-                dG_rev = self.dG_act - self.dG
-                if isinstance(dG_rev, sym.Basic):
-                    subs = {}
-                    for atom in dG_rev.atoms(sym.Symbol):
-                        subs[atom] = 0.
-                    dG_rev = dG_rev.subs(subs)
-
+                dG_rev = _at_zero_coverage(self.dG_act - self.dG)
                 if dG_rev < 0.:
                     warnings.warn('Negative activation energy found for {}. '
                                   'Rounding to {}'.format(self, self.dG),
@@ -311,10 +364,18 @@ class Reaction:
 
     def _calc_kfor(self):
         barr = 1
-        if self.dG_act is not None:
+        if self.clip == 'coverage':
+            # CatMap's convention: the transition state is raised to the
+            # higher of the initial and final states at the current coverages
+            dG_act = 0. if self.dG_act is None else self.dG_act
+            barr = sym.exp(-sym.Max(dG_act, self.dG, 0) / (kB * self.T)) \
+                / self.reactants.get_reference_state()
+        elif self.dG_act is not None:
             barr *= sym.exp(-self.dG_act / (kB * self.T)) \
                     / self.reactants.get_reference_state()
-        if self.method == 'EQUIL':
+        if self.method == 'EQUIL' and self.clip == 'coverage':
+            self.kfor = _k * self.T * barr / _hplanck * self.scale['kfor']
+        elif self.method == 'EQUIL':
             self.kfor = _k * self.T * barr / _hplanck * self.scale['kfor']
             if isinstance(self.keq, sym.Basic):
                 subs = {}
@@ -349,7 +410,7 @@ class Reaction:
             dS = (fluid.S['trans2D'] - fluid.S['trans']) * Slost
             dG = fluid.E['trans2D'] - fluid.E['trans'] - self.T * dS
             self.kfor = barr * _k * self.T / _hplanck * np.exp(-dG / (kB * self.T))
-            if self.dG_act is None:
+            if self.dG_act is None and self.clip != 'coverage':
                 # dG above depends on the fluid's reference state through
                 # its translational entropy (barr divides by it otherwise)
                 self.kfor /= self.reactants.get_reference_state()
