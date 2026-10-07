@@ -1,0 +1,19 @@
+# Conda environment for micki:
+#
+#     conda env create -f environment.yml
+#     conda activate micki
+#
+# sundials4py (the SUNDIALS Python interface) and micki itself are not on
+# conda-forge, so they are installed with pip inside the environment.
+name: micki
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.12
+  - ase
+  - numpy>=2
+  - sympy
+  - pip
+  - pip:
+      - sundials4py>=7.9
+      - -e .
