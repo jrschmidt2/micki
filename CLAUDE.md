@@ -20,7 +20,7 @@ python -m unittest discover -s tests -v                                   # all 
 python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test
 ```
 
-`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. Conditions follow Table 5 of Grabow et al., J. Phys. Chem. C 2008, 112, 4608 (the original `wgs_tof.py` had y(H2) of condition 13 and y(CO) of condition 17 mistyped). Apart from those two conditions, the reference agrees with the original Fortran/SUNDIALS 4.X results to ~1e-10. After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
+`tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. Conditions follow Table 5 of Grabow et al., J. Phys. Chem. C 2008, 112, 4608 (the original `wgs_tof.py` had y(H2) of condition 13 and y(CO) of condition 17 mistyped). Reference history: it reproduced the original Fortran/SUNDIALS 4.X results to ~1e-10, then conditions 13/17 were corrected, then the fluid pV = kT fix raised all TOFs ×1.33–1.45; the model's `dE` shifts were calibrated before that fix and have not been refitted (RMS log-error vs experiment 0.133 → 0.348). After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
 
 ## Releasing
 
@@ -34,6 +34,8 @@ python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one
 ## Architecture
 
 **Species (`reactants.py`)** — `_Thermo` is the base class computing partition functions and H/S/G/E at temperature `T`, with caching via `update()`/`is_update_needed()`. Subclasses: `_Fluid` → `Gas`, `Liquid`; `Adsorbate` (occupies `sites`, may be a transition state); `Electron`. Each species with a label gets a sympy `Symbol` (`species.symbol`) used to build rate expressions. Species support `+` and `*` to form `_Reactants` collections, which is how reaction sides are written (e.g. `2 * H + O2`). Site vacancies are themselves `Adsorbate`-like species referenced via `sites`.
+
+Free energies follow Hermes' dissertation (UW–Madison 2018): fluids use G = E + kT − TS per molecule, i.e. the chemical potential −kT ln(q/N) at the reference concentration (eqs. 2.17, 2.23; `_Fluid._calc_q`); adsorbates and transition states use the Helmholtz energy −kT ln(σ q) with configurational factor σ (eqs. 3.8–3.16). `tests/test_model.py::test_adsorption_equilibrium_constant` checks K = Q_ads/Q_gas against ASE.
 
 **Reactions (`model.py: Reaction`)** — computes `keq`, `kfor`, `krev` (possibly sympy expressions in coverages, for lateral interactions/lattice effects). The rate law is selected by `method`: `TST` (default when `ts` given), `EQUIL` (default otherwise), `DIEQUIL`, `STICK`, `ER`, `DIFF`, `DIFF_LIQ`. Per-parameter multipliers are in `reaction.scale` (used by `analysis.py` for sensitivity/degree-of-rate-control).
 

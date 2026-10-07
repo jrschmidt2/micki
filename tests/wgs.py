@@ -10,10 +10,11 @@ Running this file regenerates the reference data used by test_wgs.py:
     python tests/wgs.py
 
 Only do that after an intentional change in results, and say why in the
-commit message. The current reference was generated with the sundials4py
-solver after correcting conditions 13 and 17; for the other 19 conditions it
-agrees with the original Fortran/SUNDIALS 4.X results (commit bb8aa7d) to
-~1e-10.
+commit message. History of the reference: it reproduced the original
+Fortran/SUNDIALS 4.X results (commit bb8aa7d) to ~1e-10, then conditions 13
+and 17 were corrected (Grabow et al. Table 5), then the missing pV = kT term
+in fluid free energies was added (TOFs x1.33-1.45). The energy shifts (dE)
+below were calibrated before that fix and have not been refitted.
 """
 
 import json

@@ -352,7 +352,13 @@ class _Fluid(_Thermo):
         self.q['tot'] = self.q['trans'] * self.q['rot'] * self.q['vib']
         self.E['tot'] = self.E['elec'] + self.E['trans'] + self.E['rot'] + \
             self.E['vib']
-        self.H = self.E['tot']
+        # H = E + pV = E + kT per molecule, so that G = H - TS equals the
+        # chemical potential at the reference concentration,
+        # -kT ln(q/N) (Hermes thesis eqs. 2.17, 2.23). S_trans already
+        # contains the +kT from ln N! (Sackur-Tetrode), so without this term
+        # G would be kT too low and every equilibrium constant that changes
+        # the number of fluid molecules would be off by a factor e each.
+        self.H = self.E['tot'] + kB * T
         self.S['tot'] = self.S['elec'] + self.S['trans'] + self.S['rot'] + \
             self.S['vib']
 

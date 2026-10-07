@@ -110,6 +110,37 @@ class ModelTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Adsorbate(self.sp['co'].atoms, 'bad', freqs)
 
+    def test_adsorption_equilibrium_constant(self):
+        # K = Q_ads / Q_gas at the 1 M reference state (Hermes thesis eq.
+        # 3.23), computed independently with ASE: the gas free energy must
+        # be the ideal-gas chemical potential (including the pV = kT term)
+        from ase.thermochemistry import IdealGasThermo, HarmonicThermo
+        from ase.units import kB, _k, _Nav
+        T = 548.
+        sp = wgs.build_species()
+        for s in sp.values():
+            s.lateral = 0.
+        for gas_name, ads_name in [('co_g', 'co'), ('h2o_g', 'h2o')]:
+            gas, ads = sp[gas_name], sp[ads_name]
+            rxn = Reaction(gas, ads, method='STICK')
+            rxn.update(T=T, Asite=wgs.ASITE, L=0)
+            atoms = gas.atoms.copy()
+            atoms.pbc = False
+            atoms.set_masses(gas.mass)
+            G_gas = IdealGasThermo(
+                vib_energies=gas.freqs[gas.ncut:],
+                geometry='linear' if gas.linear else 'nonlinear',
+                potentialenergy=gas.potential_energy + gas.dE, atoms=atoms,
+                symmetrynumber=gas.symm, spin=gas.spin).get_gibbs_energy(
+                    T, pressure=1000 * _Nav * _k * T, verbose=False)
+            A_ads = HarmonicThermo(
+                vib_energies=ads.freqs,
+                potentialenergy=ads.potential_energy + ads.dE
+            ).get_helmholtz_energy(T, verbose=False)
+            K = np.exp(-(A_ads - G_gas) / (kB * T))
+            self.assertAlmostEqual(float(rxn.keq) / K, 1., places=10,
+                                   msg=gas_name)
+
     def test_energy_reference_from_atoms(self):
         h2 = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]])
         h2.calc = SinglePointCalculator(h2, energy=-6.8)
