@@ -49,3 +49,5 @@ Releases are published to PyPI automatically by GitHub Actions
 
 Publishing the release runs the tests, builds the package and uploads it to
 PyPI. The workflow refuses to publish if the tag does not match the version.
+To check the build and tests without publishing, start the workflow by hand
+("Run workflow" under Actions -> Publish to PyPI).
