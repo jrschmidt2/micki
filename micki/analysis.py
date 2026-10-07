@@ -1,6 +1,6 @@
 """Module for doing sensitivity analysis of microkinetic model"""
 
-import collections
+import collections.abc
 
 import numpy as np
 import sympy as sym
@@ -240,14 +240,22 @@ class ModelAnalysis(object):
         return (rhomid / self.rmid) * (rhigh - rlow) / (rhohigh - rholow)
 
     def drate_order_dg(self, fluid, adsorbates, rho_scale=0.01, g_scale=0.01):
-        assert isinstance(fluid, _Fluid)
+        """(rho/r) d^2 r / (d rho dG): the change of the rate order in
+        `fluid` with the free energy of `adsorbates` (shifted together).
 
-        if not isinstance(adsorbates, collections.Iterable):
+        Central differences in the concentration of `fluid` (+-drho) and in
+        the free energies of `adsorbates` (+-dg).
+        """
+        if not isinstance(fluid, _Fluid):
+            raise TypeError('fluid must be a Gas or Liquid species')
+
+        if not isinstance(adsorbates, collections.abc.Iterable):
             adsorbates = [adsorbates]
 
-        assert isinstance(adsorbates[0], Adsorbate)
+        if not isinstance(adsorbates[0], Adsorbate):
+            raise TypeError('adsorbates must be Adsorbate species')
 
-        rhomid = self.U[fluid]
+        rhomid = self.U[fluid.label]
         assert rhomid > 0
         rmid = self.r[self.reaction_name]
         gmid = adsorbates[0].get_G(self.model.T)
@@ -278,14 +286,14 @@ class ModelAnalysis(object):
 
             for j in [-1, 1]:
                 U0 = self.Uequil.copy()
-                U0[fluid] = rhomid + j * drho
+                U0[fluid.label] = rhomid + j * drho
 
                 model = self.model.copy(initialize=False)
                 model.set_initial_conditions(U0)
 
 #                Ui, ri = model.solve(self.dt, 100)
                 ti, Ui, ri = model.find_steady_state()
-                dr += i * j * ri[self.product_reaction]
+                dr += i * j * ri[self.reaction_name]
 
             for adsorbate in adsorbates:
                 set_dg(adsorbate, -i * dg)
@@ -296,7 +304,8 @@ class ModelAnalysis(object):
                             L=self.model.z,
                             force=True)
 
-        return (rhomid / rmid) * dr / (dg * drho)
+        # the four rates are 2 * dg and 2 * drho apart
+        return (rhomid / rmid) * dr / (4 * dg * drho)
 
     def check_converged(self, *vals):
         for val in vals:

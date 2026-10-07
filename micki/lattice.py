@@ -69,20 +69,18 @@ class Lattice(object):
             if site not in string_to_thermo:
                 raise ValueError('No _Thermo object for site {}!'.format(site))
 
-        new_sites = []
-        new_neighborlist = {}
-
-        for string, thermo in string_to_thermo.items():
+        for string in string_to_thermo:
             if string not in self.sites:
                 raise ValueError('Unknown site name {}!'.format(string))
-            new_sites.append(thermo)
-            new_neighborlist[thermo] = {}
-            for neighbor, count in self.neighborlist[string].items():
-                new_neighborlist[thermo] = string_to_thermo[neighbor]
 
-        self.sites = new_sites
-        self.neighborlist = new_neighborlist
-        self.string_names = False
+        new_neighborlist = {}
+        for site, neighbors in self.neighborlist.items():
+            new_neighborlist[string_to_thermo[site]] = {
+                string_to_thermo[neighbor]: count
+                for neighbor, count in neighbors.items()}
+
+        # rebuild everything (totneighbors, ratio, ...) with the new keys
+        self.__init__(new_neighborlist)
 
     def get_S_conf(self, sites):
         if sites is None or isinstance(sites, _Thermo) or len(sites) == 1:

@@ -10,6 +10,7 @@ from sympy import Symbol
 from ase import Atoms
 from ase.io import read
 from ase.db import connect
+from ase.db.core import Database
 from ase.db.row import AtomsRow
 from ase.units import J, mol, _hplanck, m, kg, _k, kB, _c, Pascal, _Nav
 
@@ -170,6 +171,7 @@ class _Thermo(object):
 
     def get_G(self, T=None):
         self.update(T)
+        T = self.T
         return self.get_H(T) - T * self.get_S(T)
 
     def get_E(self, T=None):
@@ -338,7 +340,7 @@ class _Fluid(_Thermo):
             label = newlabel
         return self.__class__(self.atoms, label, self.freqs,
                               self.symm, self.spin, self.eref,
-                              self.rhoref, self.dE)
+                              self.rho0, self.dE)
 
     def _calc_q(self, T):
         self._calc_qelec(T)
@@ -366,6 +368,7 @@ class Electron(_Thermo):
         self.atoms = Atoms()
         self.potential_energy = E
         self.label = label
+        self.self_repulsion = self_repulsion
         self.lateral = self_repulsion * self.symbol
 
     def get_reference_state(self):
@@ -375,7 +378,8 @@ class Electron(_Thermo):
         label = self.label
         if newlabel is not None:
             label = newlabel
-        return self.__class(self.potential_energy, self.lateral, label)
+        return self.__class__(self.potential_energy, self.self_repulsion,
+                              label)
 
     def _calc_q(self, T):
         self._calc_qelec(T)
@@ -413,7 +417,7 @@ class Liquid(_Fluid):
             label = newlabel
         return self.__class__(self.atoms, label, self.freqs,
                               self.symm, self.spin, self.eref,
-                              self.rhoref, self.Sliq, self.D, self.dE)
+                              self.rho0, self.Sliq, self.D, self.dE)
 
 
 class Adsorbate(_Thermo):

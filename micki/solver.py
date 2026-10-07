@@ -156,6 +156,10 @@ class IDASolver(object):
                                 dtype=float).reshape(self.nvac)
             except self._MATH_ERRORS:
                 pass
+            except Exception:
+                # e.g. a function without a math-module equivalent in a
+                # Piecewise branch not taken at the initial state
+                self._fast = False
         vac = self._raw_vacancies(y, (), float)
         vac[vac < NEG_TOL] = 0.
         return vac
@@ -169,6 +173,8 @@ class IDASolver(object):
                                 dtype=float).reshape(self.nrates)
             except self._MATH_ERRORS:
                 pass
+            except Exception:
+                self._fast = False
         vac = self._raw_vacancies(y, (), float)
         vac[vac < NEG_TOL] = 0.
         return self._raw_rates(y, vac, (), float)

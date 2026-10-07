@@ -107,6 +107,19 @@ class FastPathTest(unittest.TestCase):
             np.testing.assert_allclose(fast[~np.isnan(fast)],
                                        slow[~np.isnan(slow)])
 
+    def test_missing_math_function_falls_back(self):
+        # re() has no math-module equivalent; the branch using it is not
+        # taken at the initial state, so the start-up check passes
+        a, b, v = sym.symbols('a b v')
+        rates = [sym.Piecewise((a, a < 0.5), (sym.re(a)**2, True)), a - b]
+        s = IDASolver([a, b], [v], [1 - a - b], rates, [[1, -1], [-1, 1]],
+                      [1., 1.])
+        s.initialize([0.1, 0.2], 1e-10, np.array([1e-16, 1e-16]))
+        self.assertTrue(s._fast)
+        res, _ = s.residual(np.array([0.6, 0.2]), np.zeros(2))
+        np.testing.assert_allclose(res, [0.36 - 0.4, -0.36 + 0.4])
+        self.assertFalse(s._fast)
+
     def test_fast_and_numpy_paths_agree(self):
         s = ComplexStepJacobianTest('setUp')
         s.setUp()

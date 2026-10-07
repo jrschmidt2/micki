@@ -70,6 +70,35 @@ class ModelAnalysisTest(unittest.TestCase):
             self.assertAlmostEqual(got, expected, delta=1e-4 * abs(expected),
                                    msg=name)
 
+    def test_drate_order_dg(self):
+        # separate mixed central difference of the co_ads rate in CO
+        # pressure and the free energy of adsorbed CO
+        fluid, ads = self.sp['co_g'], self.sp['co']
+        got = float(self.analysis.drate_order_dg(fluid, [ads]))
+        rhomid = self.analysis.U['co_g']
+        rmid = self.analysis.r['co_ads']
+        gmid = float(ads.get_G(self.T).subs(
+            {s.symbol: self.analysis.U[s.label]
+             for s in self.model._species if s.symbol is not None}))
+        dg = abs(gmid * 0.01 * 2)
+        drho = rhomid * 0.01 * 2
+        total = 0.
+        for i in (-1, 1):
+            ads.dE += i * dg
+            for rxn in self.rxns.values():
+                rxn.update(T=self.T, Asite=wgs.ASITE, L=0, force=True)
+            for j in (-1, 1):
+                U0 = dict(self.analysis.Uequil)
+                U0['co_g'] = rhomid + j * drho
+                model = self.model.copy(initialize=False)
+                model.set_initial_conditions(U0)
+                total += i * j * model.find_steady_state()[2]['co_ads']
+            ads.dE -= i * dg
+        for rxn in self.rxns.values():
+            rxn.update(T=self.T, Asite=wgs.ASITE, L=0, force=True)
+        expected = rhomid / rmid * total / (4 * dg * drho)
+        self.assertAlmostEqual(got, expected, delta=1e-6 * abs(expected))
+
 
 if __name__ == '__main__':
     unittest.main()

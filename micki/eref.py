@@ -32,7 +32,7 @@ class EnergyReference(dict):
         for sp in species:
             if isinstance(sp, Atoms):
                 conf = sp
-            if isinstance(sp, AtomsRow):
+            elif isinstance(sp, AtomsRow):
                 conf = sp.toatoms()
             elif isinstance(sp, _Thermo):
                 conf = sp.atoms

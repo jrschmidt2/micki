@@ -23,18 +23,19 @@ class Reaction(object):
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
                  dG_act=None, dground=False, reversible=True):
 
-        # Wrap reactants and products in _Reactants type
+        # Wrap reactants and products in _Reactants type. _Reactants passed
+        # in are copied, since bare sites may be added to them below.
         if isinstance(reactants, _Thermo):
             self.reactants = _Reactants([reactants])
         elif isinstance(reactants, _Reactants):
-            self.reactants = reactants
+            self.reactants = reactants.copy()
         else:
             raise NotImplementedError
 
         if isinstance(products, _Thermo):
             self.products = _Reactants([products])
         elif isinstance(products, _Reactants):
-            self.products = products
+            self.products = products.copy()
         else:
             raise NotImplementedError
 
@@ -341,6 +342,8 @@ class Reaction(object):
                                          "can react with STICK!")
                     found_fluid = True
                     fluid = species
+            if not found_fluid:
+                raise ValueError("STICK requires a fluid reactant!")
             Sfluid = fluid.get_S(self.T)
             fluid._calc_qtrans2D(self.T, self.Asite)
             Strans = Sfluid - fluid.S['elec'] - fluid.S['rot'] - fluid.S['vib']
@@ -363,7 +366,7 @@ class Reaction(object):
             m_prod = 0.
             for species in self.products:
                 if isinstance(species, _Fluid):
-                    m_prod = species.atoms.get_masses().sum()
+                    m_prod += species.atoms.get_masses().sum()
             # FIXME: barr should be different for reverse reaction
             krev2 = barr * 1000 * self.S0 * _Nav * self.Asite \
                 * np.sqrt(_k * self.T * kg / (2 * np.pi * m_prod)) \
@@ -382,6 +385,9 @@ class Reaction(object):
                                          "have exactly 1 fluid!")
                     found_fluid = True
                     D = species.D
+            if not found_fluid or D is None:
+                raise ValueError("Diffusion reaction requires a fluid "
+                                 "reactant with a diffusion coefficient D!")
             sites = 1
             for species in self.reactants:
                 if isinstance(species, Adsorbate):
@@ -465,7 +471,7 @@ class Model(object):
         if solvent is not None:
             if self.solvent is not None:
                 warnings.warn('Overriding old solvent {} with {}.'
-                              ''.format(solvent, self.solvent),
+                              ''.format(self.solvent, solvent),
                               RuntimeWarning, stacklevel=2)
             if not isinstance(self.species[solvent], Liquid):
                 raise ValueError("Solvent must be a Liquid!")
@@ -542,8 +548,17 @@ class Model(object):
             self._lattice = Lattice(lattice)
         else:
             raise ValueError('Unable to parse lattice!')
-        for species in self._species:
-            species.set_lattice(self.lattice)
+        # Configurational entropies depend on the lattice, so species and
+        # reactions are recomputed.
+        for species in self._species + self.vacancy:
+            species.lattice = self.lattice
+            if species.T is not None:
+                species.update(force=True)
+        for reaction in self._reactions:
+            if reaction.ts is not None:
+                for ts in reaction.ts:
+                    ts.lattice = self.lattice
+            reaction.update(T=self.T, Asite=self.Asite, L=self.z, force=True)
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
