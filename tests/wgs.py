@@ -1,7 +1,8 @@
 """Water-gas shift microkinetic model used as a regression test.
 
 The model (species database, energy shifts, lateral interactions, reactions)
-is taken unchanged from the original wgs_tof.py example. The 21 experimental
+is taken from the original wgs_tof.py example, except for the symmetry
+numbers and the sites of the CO-OH transition state (see below). The 21 experimental
 reaction conditions are those of Table 5 in Grabow et al., J. Phys. Chem. C
 2008, 112, 4608 (conditions 13 and 17 were mistyped in wgs_tof.py).
 
@@ -13,8 +14,12 @@ Only do that after an intentional change in results, and say why in the
 commit message. History of the reference: it reproduced the original
 Fortran/SUNDIALS 4.X results (commit bb8aa7d) to ~1e-10, then conditions 13
 and 17 were corrected (Grabow et al. Table 5), then the missing pV = kT term
-in fluid free energies was added (TOFs x1.33-1.45). The energy shifts (dE)
-below were calibrated before that fix and have not been refitted.
+in fluid free energies was added (TOFs x1.33-1.45), then the sign of the
+adsorbate symmetry number was corrected (it divides the number of
+orientations), symm = 2 was removed from the ho-h and o-co transition states,
+and the co-oh transition state was given two sites like the other transition
+states (TOFs x1.3-3.2). The energy shifts (dE) below were calibrated before
+these fixes and have not been refitted.
 """
 
 import json
@@ -75,9 +80,10 @@ COVERAGE0 = {'co': 0.56275433599205904,
 def build_species():
     sp = read_from_db(os.path.join(DATA_DIR, 'wgs.json'),
                       eref=['slab', 'co_g', 'h2o_g', 'h2_g'])
-    sp['ho-h'].symm = 2
+    # The O-H-OH transition state (H transfer between two O) is end-to-end
+    # symmetric. The original example also set symm = 2 for ho-h and o-co,
+    # which are not.
     sp['o-h-oh'].symm = 2
-    sp['o-co'].symm = 2
 
     # Shift CO and H energies to match experimental binding enthalpies
     sp['co'].dE = 0.09496182099234107
