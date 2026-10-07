@@ -221,7 +221,8 @@ class Reaction:
             all_symbols.update(sym.sympify(dEr).atoms(sym.Symbol))
             all_symbols.update(sym.sympify(dEp).atoms(sym.Symbol))
 
-            if sym.sympify(dEp - dEr).subs({symbol: 0 for symbol in all_symbols}) == 0:
+            # is_zero, not == 0: sympy >= 1.13 has Float(0.0) != 0
+            if sym.sympify(dEp - dEr).subs({symbol: 0 for symbol in all_symbols}).is_zero:
                 self.alpha = dGf / (dGf + dGr)
             else:
                 a1 = (2*dEp - 2*dEr - dGf - dGr - sym.sqrt(8*(dEp-dEr)*dGf + (-2*dEp + 2*dEr + dGf + dGr)**2))/(4*(dEp-dEr))
