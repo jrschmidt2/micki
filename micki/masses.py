@@ -1,4 +1,17 @@
-# Masses from the 3rd edition of the "Green Book"
+"""Atomic masses of the most abundant isotope of each element.
+
+These are the masses of single isotopes (1H, 12C, 16O, 195Pt, ...), the usual
+convention for the translational and rotational partition functions and for
+mass-weighting Hessians (micki.io) of a specific molecule. They are not the
+isotope-averaged standard atomic weights in ase.data.atomic_masses (H 1.008,
+C 12.011, ...); ASE has isotope masses only by downloading them from NIST
+(ase.data.isotopes). Switching to the averaged weights changes the WGS
+regression TOFs by ~2e-4 (relative).
+
+Source: IUPAC "Green Book" (Quantities, Units and Symbols in Physical
+Chemistry), 3rd edition.
+"""
+
 masses = {
         'H':  1.00782503207,
         'He': 4.00260325415,
