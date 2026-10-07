@@ -8,18 +8,17 @@ import numpy as np
 from sympy import Symbol
 
 from ase import Atoms
-from ase.io import read
 from ase.db import connect
 from ase.db.core import Database
 from ase.db.row import AtomsRow
-from ase.units import J, mol, _hplanck, m, kg, _k, kB, _c, Pascal, _Nav
+from ase.units import mol, _hplanck, m, kg, _k, kB
 
 from micki.masses import masses
 from micki.io import parse_vasp_out
 from micki.utils import calculate_avg_vdw_radius
 
 
-class _Thermo(object):
+class _Thermo:
     """Generic thermodynamics object
 
     This is the base object that all reactant objects inherit from.
@@ -305,7 +304,9 @@ class _Thermo(object):
         raise NotImplementedError
 
     def __mul__(self, factor):
-        assert isinstance(factor, int)
+        if not isinstance(factor, int) or factor <= 0:
+            raise ValueError('Can only multiply a species by a positive '
+                             'integer')
         return _Reactants([self for i in range(factor)])
 
     def __rmul__(self, factor):
@@ -328,8 +329,9 @@ class _Fluid(_Thermo):
         self.rho0 = rhoref
         self.dE = dE
         self._R = None
-        assert np.all(self.freqs[self.ncut:] > 0), \
-            "Extra imaginary frequencies found!"
+        if not np.all(self.freqs[self.ncut:] > 0):
+            raise ValueError("Extra imaginary frequencies found for {}!"
+                             "".format(label))
 
     def get_reference_state(self):
         return self.rho0
@@ -350,7 +352,7 @@ class _Fluid(_Thermo):
         self.q['tot'] = self.q['trans'] * self.q['rot'] * self.q['vib']
         self.E['tot'] = self.E['elec'] + self.E['trans'] + self.E['rot'] + \
             self.E['vib']
-        self.H = self.E['tot'] #+ kB * T
+        self.H = self.E['tot']
         self.S['tot'] = self.S['elec'] + self.S['trans'] + self.S['rot'] + \
             self.S['vib']
 
@@ -403,14 +405,6 @@ class Liquid(_Fluid):
         self.Sliq = S
         self.D = D
 
-    def _calc_q(self, T):
-        _Fluid._calc_q(self, T)
-#        if self.Sliq is None:
-#            # Use Trouton's Rule
-#            self.S['tot'] -= (4.5 + np.log(T)) * kB
-#        else:
-#            self.S['tot'] = self.Sliq
-
     def copy(self, newlabel=None):
         label = self.label
         if newlabel is not None:
@@ -422,7 +416,7 @@ class Liquid(_Fluid):
 
 class Adsorbate(_Thermo):
     def __init__(self, atoms, label, freqs=None, ts=None,
-                 spin=0., sites=[], lattice=None, eref=None, dE=0.,
+                 spin=0., sites=None, lattice=None, eref=None, dE=0.,
                  symm=1):
         _Thermo.__init__(self)
         self.atoms = atoms
@@ -430,13 +424,14 @@ class Adsorbate(_Thermo):
         self.label = label
         self.ts = ts
         self.spin = spin
-        self.sites = sites
+        self.sites = [] if sites is None else sites
         self.lattice = lattice
         self.eref = eref
         self.dE = dE
         self.symm = symm
-        assert np.all(self.freqs[1 if ts else 0:] > 0), \
-            "Imaginary frequencies found!"
+        if not np.all(self.freqs[1 if ts else 0:] > 0):
+            raise ValueError("Imaginary frequencies found for {}!"
+                             "".format(label))
 
     def get_reference_state(self):
         return 1.
@@ -463,12 +458,7 @@ class Adsorbate(_Thermo):
                               self.symm)
 
 
-class Shomate(_Thermo):
-    def __init__(self):
-        raise NotImplementedError
-
-
-class _Reactants(object):
+class _Reactants:
     def __init__(self, species):
         self.species = []
         self.elements = {}
@@ -488,18 +478,11 @@ class _Reactants(object):
                 # object, append the _Thermo to species and update
                 # elements
                 self.species.append(other)
-                if isinstance(other, Shomate):
-                    for symbol in other.elements:
-                        if symbol in self.elements:
-                            self.elements[symbol] += other.elements[symbol]
-                        else:
-                            self.elements[symbol] = other.elements[symbol]
-                else:
-                    for symbol in other.atoms.get_chemical_symbols():
-                        if symbol in self.elements:
-                            self.elements[symbol] += 1
-                        else:
-                            self.elements[symbol] = 1
+                for symbol in other.atoms.get_chemical_symbols():
+                    if symbol in self.elements:
+                        self.elements[symbol] += 1
+                    else:
+                        self.elements[symbol] = 1
 
             else:
                 raise NotImplementedError
@@ -573,14 +556,14 @@ class _Reactants(object):
         return _Reactants([self, other])
 
     def __imul__(self, factor):
-        assert isinstance(factor, int) and factor > 0
+        if not isinstance(factor, int) or factor <= 0:
+            raise ValueError('Can only multiply by a positive integer')
         self.species *= factor
         for key in self.elements:
             self.elements[key] *= factor
         return self
 
     def __mul__(self, factor):
-        assert isinstance(factor, int) and factor > 0
         new = self.copy()
         new *= factor
         return new
@@ -593,9 +576,6 @@ class _Reactants(object):
 
     def __getitem__(self, i):
         return self.species[i]
-
-    def __getslice__(self, i, j):
-        return _Reactants([self.species[i:j]])
 
     def __len__(self):
         return len(self.species)

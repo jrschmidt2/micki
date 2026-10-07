@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import numpy as np
 
 from ase.io import read
@@ -7,7 +5,7 @@ from ase.units import _hplanck, J, m, kg
 
 from micki.masses import masses
 
-def parse_vasp_out(filename, ignore_atoms=[]):
+def parse_vasp_out(filename, ignore_atoms=()):
     atoms = read(filename, index=0)
     for atom in atoms:
         atom.mass = masses[atom.symbol]

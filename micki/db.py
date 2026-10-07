@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-
-import numpy as np
+import warnings
 
 from ase.db import connect
 from ase.db.core import Database
@@ -60,7 +58,8 @@ def read_from_db(db, names=None, eref=None):
         try:
             species[name] = row_to_thermo(row)
         except MickiDBReadError:
-            print("Could not parse row {}, skipping.".format(name))
+            warnings.warn("Could not parse row {}, skipping.".format(name),
+                          RuntimeWarning, stacklevel=2)
 
     for name, sp in species.items():
         newsites = []

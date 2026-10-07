@@ -64,7 +64,7 @@ class EnergyReference(dict):
         if self.initialized:
             raise NotImplementedError
         else:
-            super(EnergyReference, self).__setitem__(key, value)
+            super().__setitem__(key, value)
 
     def __delitem__(self, key):
         raise NotImplementedError
@@ -74,7 +74,7 @@ class EnergyReference(dict):
             key = key.capitalize()
         elif isinstance(key, int):
             key = chemical_symbols[key]
-        return super(EnergyReference, self).__getitem__(key)
+        return super().__getitem__(key)
 
     def copy(self):
         new = EnergyReference.__new__(EnergyReference)

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Masses from the 3rd edition of the "Green Book"
 masses = {
         'H':  1.00782503207,

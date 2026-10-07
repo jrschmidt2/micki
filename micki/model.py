@@ -1,7 +1,5 @@
 """Microkinetic modeling objects"""
 
-from __future__ import print_function
-
 import warnings
 
 from collections import OrderedDict
@@ -9,7 +7,6 @@ from collections import OrderedDict
 import numpy as np
 import sympy as sym
 
-from copy import copy
 from ase.units import kB, _hplanck, kg, _k, _Nav, mol
 
 from micki.reactants import _Thermo, _Fluid, _Reactants, Gas, Liquid, Adsorbate
@@ -19,7 +16,7 @@ from micki.lattice import Lattice
 from micki.solver import IDASolver
 
 
-class Reaction(object):
+class Reaction:
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
                  dG_act=None, dground=False, reversible=True):
 
@@ -83,8 +80,9 @@ class Reaction(object):
         self.ts = None
         # The user supplied a transition state species
         if ts is not None:
-            assert dG_act is None, \
-                    "Cannot specify both barrier height and transition state!"
+            if dG_act is not None:
+                raise ValueError("Cannot specify both barrier height and "
+                                 "transition state!")
             # Wrap the TS in the _Reactants class
             if isinstance(ts, _Thermo):
                 self.ts = _Reactants([ts])
@@ -315,7 +313,6 @@ class Reaction(object):
         if self.dG_act is not None:
             barr *= sym.exp(-self.dG_act / (kB * self.T)) \
                     / self.reactants.get_reference_state()
-#                    * self.ts.get_reference_state() \
         if self.method == 'EQUIL':
             self.kfor = _k * self.T * barr / _hplanck * self.scale['kfor']
             if isinstance(self.keq, sym.Basic):
@@ -427,7 +424,7 @@ class Reaction(object):
         return string
 
 
-class Model(object):
+class Model:
     def __init__(self, T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
                  analytic_jac=False):
         self.reactions = OrderedDict()
@@ -454,7 +451,8 @@ class Model(object):
     def add_reactions(self, reactions):
         # Set up list of reactions and species
         for name, reaction in reactions.items():
-            assert isinstance(reaction, Reaction)
+            if not isinstance(reaction, Reaction):
+                raise TypeError('{} is not a Reaction'.format(name))
             if reaction in self._reactions:
                 continue
             self._reactions.append(reaction)
@@ -486,7 +484,8 @@ class Model(object):
                 self.fixed.append(name)
 
     def _add_species(self, species):
-        assert isinstance(species, _Thermo)
+        if not isinstance(species, _Thermo):
+            raise TypeError('{} is not a species'.format(species))
         # Do nothing if we already know about the species
         if species in self._species or species in self.vacancy:
             return
@@ -641,8 +640,8 @@ class Model(object):
                 self.vactot[vac] = 1.
             # Make sure there isn't too much stuff occupying each kind of
             # site on the surface.
-            assert occsites[vac] <= self.vactot[vac], \
-                    "Too many adsorbates on {}!".format(vac)
+            if occsites[vac] > self.vactot[vac]:
+                raise ValueError("Too many adsorbates on {}!".format(vac))
             # Normalize the concentration of empty sites to match the
             # appropriate site ratio from the lattice.
             self.U0[name] = self.vactot[vac] - occsites[vac]
@@ -655,8 +654,6 @@ class Model(object):
             if name not in self.U0:
                 self.U0[name] = 0.
 
-        # The number of variables that will be in our differential equations
-        size = len(self._species)
 
         # This creates a symbol for each species named modelparamX where X
         # is a three-digit numerical identifier that corresponds to its

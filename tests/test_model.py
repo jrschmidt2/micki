@@ -98,6 +98,18 @@ class ModelTest(unittest.TestCase):
         np.testing.assert_allclose(read['co'].freqs, self.sp['co'].freqs)
         self.assertEqual([s.label for s in read['co'].sites], ['slab'])
 
+    def test_adsorbates_do_not_share_default_sites(self):
+        from micki import Adsorbate
+        atoms, freqs = self.sp['co'].atoms, self.sp['co'].freqs
+        self.assertIsNot(Adsorbate(atoms, 'x1', freqs).sites,
+                         Adsorbate(atoms, 'x2', freqs).sites)
+
+    def test_imaginary_frequencies_raise(self):
+        from micki import Adsorbate
+        freqs = -abs(self.sp['co'].freqs)
+        with self.assertRaises(ValueError):
+            Adsorbate(self.sp['co'].atoms, 'bad', freqs)
+
     def test_energy_reference_from_atoms(self):
         h2 = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]])
         h2.calc = SinglePointCalculator(h2, energy=-6.8)

@@ -55,7 +55,7 @@ _MATH_MODULES = [{'Max': _math_max, 'Min': _math_min, 'Abs': _math_abs},
                  'math']
 
 
-class IDASolver(object):
+class IDASolver:
     """Integrate M dy/dt = dypdr . r(y, vac(y), c) with IDA.
 
     symbols: sympy symbols of the variable species (length n)

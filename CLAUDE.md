@@ -16,8 +16,8 @@ There is no build system, packaging (`setup.py`), or linter config. The package 
 ## Tests
 
 ```
-python -m unittest discover -s tests -v                                   # all (~40 s)
-python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test (~20 s)
+python -m unittest discover -s tests -v                                   # all (~15 s)
+python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one test
 ```
 
 `tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. Conditions follow Table 5 of Grabow et al., J. Phys. Chem. C 2008, 112, 4608 (the original `wgs_tof.py` had y(H2) of condition 13 and y(CO) of condition 17 mistyped). Apart from those two conditions, the reference agrees with the original Fortran/SUNDIALS 4.X results to ~1e-10. After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
@@ -52,7 +52,10 @@ Consequences to keep in mind:
 - `lattice.py: Lattice` — site neighbor lists for configurational entropy.
 - `io.py` — VASP output parsing; `masses.py` — atomic mass table.
 
+Other tests: `tests/test_model.py` (Model, Reaction, species, Lattice, vdW radius), `tests/test_analysis.py` (ModelAnalysis against independent finite differences on the WGS CSTR), `tests/test_jacobian.py` (complex-step Jacobian with non-analytic functions, fast math path and its numpy fallback).
+
 ## Conventions
 
+- Raise exceptions (`ValueError`/`TypeError`) for invalid input and use `warnings.warn` for warnings; no `assert` for validation, no `print`.
 - Python 3, 4-space indentation (a past commit converted tabs to spaces; don't reintroduce tabs).
 - Units follow ASE (`ase.units`): energies in eV.

@@ -8,10 +8,9 @@ import sympy as sym
 from ase.units import kB
 
 from micki.reactants import Adsorbate, _Fluid
-from micki.model import Model
 
 
-class ModelAnalysis(object):
+class ModelAnalysis:
     def __init__(self, model, product_reaction, Uequil, tol=1e-3, dt=3600):
         self.model = model
         self.reaction_name = product_reaction
@@ -22,11 +21,9 @@ class ModelAnalysis(object):
 
         self.model.set_initial_conditions(self.Uequil)
 
-#        self.U, self.r = self.model.solve(self.dt, 100)
         t, self.U, self.r = self.model.find_steady_state()
         model.finalize()
 
-#        self.check_converged(self.U, self.r)
         self.species_symbols = []
         for species in self.model._species:
             if species.symbol is not None:
@@ -35,10 +32,6 @@ class ModelAnalysis(object):
 
     def campbell_rate_control(self, rxn_name, scale=0.001):
         reaction = self.model.reactions[rxn_name]
-
-        keq = reaction.get_keq(self.model.T,
-                               self.model.Asite,
-                               self.model.z)
 
         subs = {}
         for species in self.species_symbols:
@@ -62,13 +55,11 @@ class ModelAnalysis(object):
 
         try:
             t1, U1, r1 = model.find_steady_state()
-#            U1, r1 = model.solve(self.dt, 100)
         finally:
             reaction.set_scale('kfor', 1.0)
             reaction.set_scale('krev', 1.0)
 
         model.finalize()
-#        self.check_converged(U1, r1)
         rlow = r1[self.reaction_name]
         if isinstance(klow, sym.Basic):
             subs = {}
@@ -87,13 +78,11 @@ class ModelAnalysis(object):
 
         try:
             t2, U2, r2 = model.find_steady_state()
-#            U2, r2 = model.solve(self.dt, 100)
         finally:
             reaction.set_scale('kfor', 1.0)
             reaction.set_scale('krev', 1.0)
 
         model.finalize()
-#        self.check_converged(U2, r2)
         rhigh = r2[self.reaction_name]
         if isinstance(khigh, sym.Basic):
             subs = {}
@@ -121,37 +110,25 @@ class ModelAnalysis(object):
         else:
             species = [self.model.species[name] for name in names]
 
-        gmid = species[0].get_G(T)
-        gmid = species[0].get_H(T) - T * species[0].get_S(T)
-        if isinstance(gmid, sym.Basic):
-            subs = {}
-            for sp in self.species_symbols:
-                subs[sp.symbol] = self.U[sp.label]
-            gmid = gmid.subs(subs)
-
         for sp in species:
             sp.dE -= dg
 
         for reaction in self.model._reactions:
-            oldalpha = reaction.alpha
             reaction.update(T=self.model.T,
                             Asite=self.model.Asite,
                             L=self.model.z,
                             force=True)
-            newalpha = reaction.alpha
 
         model = self.model.copy(initialize=False)
         model.set_initial_conditions(self.U)
 
         try:
             t1, U1, r1 = model.find_steady_state()
-#            U1, r1 = model.solve(self.dt, 100)
         finally:
             for sp in species:
                 sp.dE += dg
 
         model.finalize()
-#        self.check_converged(U1, r1)
         rlow = r1[self.reaction_name]
 
         for sp in species:
@@ -168,7 +145,6 @@ class ModelAnalysis(object):
 
         try:
             t2, U2, r2 = model.find_steady_state()
-#            U2, r2 = model.solve(self.dt, 100)
         finally:
             for sp in species:
                 sp.dE -= dg
@@ -180,7 +156,6 @@ class ModelAnalysis(object):
                             force=True)
 
         model.finalize()
-#        self.check_converged(U2, r2)
         rhigh = r2[self.reaction_name]
 
         # central difference: the two rates are 2 * dg apart in free energy
@@ -193,9 +168,7 @@ class ModelAnalysis(object):
         model.T = T - dT
         model.set_initial_conditions(self.Uequil)
         t1, U1, r1 = model.find_steady_state()
-#        U1, r1 = model.solve(self.dt, 100)
         model.finalize()
-#        self.check_converged(U1, r1)
 
         rlow = r1[self.reaction_name]
 
@@ -203,9 +176,7 @@ class ModelAnalysis(object):
         model.T = T + dT
         model.set_initial_conditions(self.Uequil)
         t2, U2, r2 = model.find_steady_state()
-#        U2, r2 = model.solve(self.dt, 100)
         model.finalize()
-#        self.check_converged(U2, r2)
 
         rhigh = r2[self.reaction_name]
 
@@ -215,7 +186,8 @@ class ModelAnalysis(object):
         species = self.model.species[name]
 
         rhomid = self.Uequil[species.label]
-        assert rhomid > 0
+        if not rhomid > 0:
+            raise ValueError('{} has no positive concentration'.format(name))
 
         U0 = self.Uequil.copy()
         rholow = rhomid * (1.0 - drho)
@@ -223,18 +195,14 @@ class ModelAnalysis(object):
         model = self.model.copy(initialize=False)
         model.set_initial_conditions(U0)
         t1, U1, r1 = model.find_steady_state()
-#        U1, r1 = model.solve(self.dt, 100)
         model.finalize()
-#        self.check_converged(U1, r1)
         rlow = r1[self.reaction_name]
 
         rhohigh = rhomid * (1.0 + drho)
         U0[species.label] = rhohigh
         model.set_initial_conditions(U0)
         t2, U2, r2 = model.find_steady_state()
-#        U2, r2 = model.solve(self.dt, 100)
         model.finalize()
-#        self.check_converged(U2, r2)
         rhigh = r2[self.reaction_name]
 
         return (rhomid / self.rmid) * (rhigh - rlow) / (rhohigh - rholow)
@@ -256,7 +224,9 @@ class ModelAnalysis(object):
             raise TypeError('adsorbates must be Adsorbate species')
 
         rhomid = self.U[fluid.label]
-        assert rhomid > 0
+        if not rhomid > 0:
+            raise ValueError('{} has no positive concentration'
+                             ''.format(fluid.label))
         rmid = self.r[self.reaction_name]
         gmid = adsorbates[0].get_G(self.model.T)
         if isinstance(gmid, sym.Basic):
@@ -291,7 +261,6 @@ class ModelAnalysis(object):
                 model = self.model.copy(initialize=False)
                 model.set_initial_conditions(U0)
 
-#                Ui, ri = model.solve(self.dt, 100)
                 ti, Ui, ri = model.find_steady_state()
                 dr += i * j * ri[self.reaction_name]
 
@@ -311,6 +280,8 @@ class ModelAnalysis(object):
         for val in vals:
             for i, key in enumerate(val[0]):
                 if np.abs(val[-1][key] - val[-2][key]) > self.tol:
-                    print(key, val[-1][key], val[-1][key] - val[-2][key])
-                    raise ValueError("Calculation not converged! Increase "
-                                     "dt or use better initial guess.")
+                    raise ValueError("Calculation not converged ({}: {}, "
+                                     "change {})! Increase dt or use better "
+                                     "initial guess.".format(
+                                         key, val[-1][key],
+                                         val[-1][key] - val[-2][key]))

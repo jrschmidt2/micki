@@ -1,13 +1,11 @@
 """Lattice stuff"""
 
-from __future__ import division
-
 from .reactants import _Thermo
 import numpy as np
 from ase.units import kB
 
 
-class Lattice(object):
+class Lattice:
     def __init__(self, neighborlist):
         self.neighborlist = neighborlist
         self.sites = [site for site in neighborlist]
@@ -57,9 +55,9 @@ class Lattice(object):
                 self.ratio = {site: ratio[i] for i, site in enumerate(self.sites)}
                 break
         else:
-            print("Eigenvectors: {}".format(eigenvecs))
             raise ValueError("Failed to find the element ratio! Please "
-                             "double-check your neighbor count.")
+                             "double-check your neighbor count. "
+                             "Eigenvectors: {}".format(eigenvecs))
 
     def update_site_names(self, string_to_thermo):
         if not self.string_names:
