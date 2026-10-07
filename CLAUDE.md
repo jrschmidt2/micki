@@ -64,6 +64,8 @@ Consequences to keep in mind:
 - `lateral.py: first_order` — writes CatMap's first-order lateral interactions (Σ_j F(θ_tot)·ε_ij·θ_j, response 'linear', 'piecewise_linear', 'smooth_piecewise_linear') into `species.lateral`; TS rows go with `Reaction(..., explicit_ts=True)`. `Piecewise` branches divide by `Max(θ, x0)` so numpy's evaluation of untaken branches stays finite.
 - `io.py` — VASP output parsing; `masses.py` — atomic mass table.
 
+`tests/test_catmap.py` checks the CatMap-convention options (`pref`, `clip='coverage'`, `alpha`, `explicit_ts`, `micki.lateral.first_order`) on a WGS variant (`tests/catmap_wgs.py`: 2 variants × 4 conditions) against CatMap 0.3.1's own steady state (`tests/data/catmap_wgs_reference.json`, agreement ~3e-14, test rtol 1e-10); it also checks that `tests/data/catmap_wgs_input.json` matches the current model. To regenerate after changing that model: `python tests/catmap_wgs.py` (micki env), then `python tests/catmap_reference.py` in a CatMap env (CatMap is not on PyPI and needs numpy < 1.24, e.g. Python 3.11; the script patches CatMap's CODATA-2010 kB/h to ASE's and integrates CatMap's d(theta)/dt with SciPy Radau, because CatMap's Newton solvers fail on this model).
+
 Other tests: `tests/test_model.py` (Model, Reaction, species, Lattice, vdW radius), `tests/test_analysis.py` (ModelAnalysis against independent finite differences on the WGS CSTR), `tests/test_jacobian.py` (complex-step Jacobian with non-analytic functions, fast math path and its numpy fallback).
 
 ## Conventions

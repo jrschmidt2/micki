@@ -40,6 +40,29 @@ take effect immediately).
 Run the test suite (about 15 seconds; includes a water-gas shift regression test) from the repository root:<br>
 python -m unittest discover -s tests -v
 
+### Comparing with CatMap:
+Micki's defaults follow Hermes et al., J. Chem. Phys. 151, 014112 (2019).
+Non-default options reproduce CatMap's conventions:
+
+| CatMap | Micki |
+|---|---|
+| gas free energies at 1 bar, pressures in bar | `Gas(..., pref=1)`; `micki.utils.bar_to_molar(p, T)` for concentrations |
+| transition state raised to max(IS, FS, TS) at the current coverages | `Reaction(..., clip='coverage')` |
+| step without a transition state (barrierless) | `method='EQUIL', clip='coverage'` |
+| non-activated adsorption (collision theory prefactor) | `method='STICK', clip='coverage'` |
+| first-order interactions, linear/piecewise-linear response | `micki.lateral.first_order(adsorbates, eps, response=...)` |
+| transition-state interactions weighted between IS and FS | `Reaction(..., alpha=w)` (`initial_state` w=0, `intermediate_state` 0.5, `final_state` 1) |
+| explicit transition-state interaction parameters | TS rows in `first_order`, `Reaction(..., explicit_ts=True)` |
+| no configurational entropy | no `Model.lattice` |
+
+`tests/catmap_wgs.py` builds a water-gas shift model this way;
+`tests/test_catmap.py` checks it against CatMap's own solution (agreement
+~1e-13). CatMap itself also hard-codes CODATA-2010 kB and h, uses standard
+atomic weights in collision prefactors, ignores the number of sites of
+multidentate species in its site balance, and fits interaction and
+transition-state energies to its descriptors unless told otherwise; for a
+one-to-one comparison use the energies and interaction matrix CatMap reports.
+
 ### Releasing:
 Releases are published to PyPI automatically by GitHub Actions
 (`.github/workflows/publish.yml`, PyPI trusted publishing):
