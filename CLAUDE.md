@@ -61,6 +61,7 @@ Consequences to keep in mind:
 - `eref.py: EnergyReference` — solves a linear system for per-element reference energies from N structures containing N elements.
 - `db.py` — round-trips species to/from an ASE database (`read_from_db`, `_Thermo.save_to_db`); rows store `freqs`, `thermo`, `sites`, `ts`, etc. in `row.data`.
 - `lattice.py: Lattice` — site neighbor lists for configurational entropy.
+- `lateral.py: first_order` — writes CatMap's first-order lateral interactions (Σ_j F(θ_tot)·ε_ij·θ_j, response 'linear', 'piecewise_linear', 'smooth_piecewise_linear') into `species.lateral`; TS rows go with `Reaction(..., explicit_ts=True)`. `Piecewise` branches divide by `Max(θ, x0)` so numpy's evaluation of untaken branches stays finite.
 - `io.py` — VASP output parsing; `masses.py` — atomic mass table.
 
 Other tests: `tests/test_model.py` (Model, Reaction, species, Lattice, vdW radius), `tests/test_analysis.py` (ModelAnalysis against independent finite differences on the WGS CSTR), `tests/test_jacobian.py` (complex-step Jacobian with non-analytic functions, fast math path and its numpy fallback).

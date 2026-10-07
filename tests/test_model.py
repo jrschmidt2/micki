@@ -22,7 +22,7 @@ import wgs  # noqa: E402
 from micki import (Model, Reaction, Gas, Liquid, Electron,  # noqa: E402
                    EnergyReference, Lattice)
 from micki.db import read_from_db  # noqa: E402
-from micki.utils import calculate_avg_vdw_radius  # noqa: E402
+from micki.utils import calculate_avg_vdw_radius, bar_to_molar  # noqa: E402
 from ase.units import kB, _k, _hplanck  # noqa: E402
 
 
@@ -173,7 +173,6 @@ class ModelTest(unittest.TestCase):
         # constants do not depend on the reference state
         from ase.thermochemistry import IdealGasThermo
         from ase.db import connect
-        from micki.utils import bar_to_molar
         T = 548.
 
         def rate_constants(**gas_kw):
@@ -360,6 +359,89 @@ class ReactionOptionsTest(unittest.TestCase):
         # the default computes alpha, between 0 and 1
         rxn = self._update(Reaction(react, prod, ts=ts))
         self.assertTrue(0. < float(rxn.alpha) < 1.)
+
+
+class FirstOrderLateralTest(unittest.TestCase):
+    """micki.lateral.first_order against CatMap's response functions."""
+
+    # catmap.functions.smooth_piecewise_linear(theta, slope=1.3,
+    # cutoff=0.25, smoothing=s)[0] from CatMap 0.3.1, for s = 0.05 and 0
+    CATMAP_F = {0.1: (0.0, 0.0),
+                0.22: (0.01181818181818181, 0.0),
+                0.25: (0.06499999999999999, 0.0),
+                0.28: (0.1485714285714287, 0.1392857142857144),
+                0.6: (0.7583333333333333, 0.7583333333333333)}
+
+    def test_response_functions(self):
+        from micki.lateral import _response
+        theta = sympy.Symbol('theta')
+        smooth = _response(theta, 'smooth_piecewise_linear', 1.3, 0.25, 0.05)
+        piecewise = _response(theta, 'piecewise_linear', 1.3, 0.25, 0.05)
+        for x, (f_smooth, f_piecewise) in self.CATMAP_F.items():
+            self.assertAlmostEqual(float(smooth.subs(theta, x)), f_smooth,
+                                   places=14)
+            self.assertAlmostEqual(float(piecewise.subs(theta, x)),
+                                   f_piecewise, places=14)
+        self.assertEqual(float(_response(theta, 'linear', 1.3, 0.25, 0.05)),
+                         1.3)
+        with self.assertRaises(ValueError):
+            _response(theta, 'cubic', 1., 0.25, 0.05)
+
+    def test_first_order(self):
+        from micki.lateral import first_order
+        sp = wgs.build_species()
+        ads = [sp[n] for n in ('co', 'h2o', 'oh', 'o', 'h', 'cooh')]
+        co, o, ts = sp['co'], sp['o'], sp['o-co']
+        eps = {co: {co: 1.5, o: 1.1}, o: {co: 1.1}, ts: {co: 0.7}}
+        first_order(ads, eps)
+        self.assertEqual(sympy.simplify(co.lateral - 1.5 * co.symbol
+                                        - 1.1 * o.symbol), 0)
+        first_order(ads, eps, response='piecewise_linear', cutoff=0.3)
+        cov = {'co': 0.3, 'o': 0.05, 'h': 0.1}
+        F = (sum(cov.values()) - 0.3) / sum(cov.values())
+        subs = {s: cov.get(s.name, 0.) for s in co.lateral.free_symbols}
+        self.assertAlmostEqual(float(co.lateral.subs(subs)),
+                               F * (1.5 * 0.3 + 1.1 * 0.05), places=14)
+        # below the cutoff, no interaction
+        subs = {s: 0. for s in ts.lateral.free_symbols}
+        subs[co.symbol] = 0.2
+        self.assertEqual(float(ts.lateral.subs(subs)), 0.)
+        with self.assertRaises(ValueError):
+            first_order(ads, {co: {ts: 1.}})
+        with self.assertRaises(ValueError):
+            first_order(ads[:1], {co: {o: 1.}})
+
+    def test_piecewise_steady_state(self):
+        # a CSTR steady state with a piecewise-linear response, with the
+        # complex-step Jacobian and IDA's difference quotients
+        from micki.lateral import first_order
+        sp = wgs.build_species()
+        ads = [sp[n] for n in ('co', 'h2o', 'oh', 'o', 'h', 'cooh')]
+        eps = {}
+        for i in ads:
+            terms = sympy.sympify(i.lateral).as_coefficients_dict()
+            eps[i] = {j: float(terms[j.symbol]) for j in ads
+                      if terms.get(j.symbol)}
+        first_order(ads, eps, response='piecewise_linear')
+        rxns = wgs.build_reactions(sp)
+        T, p_co, p_h2o, p_co2, p_h2, flow = wgs.CONDITIONS[6]
+        U0 = {'co_g': bar_to_molar(1.01325 * p_co, T),
+              'h2o_g': bar_to_molar(1.01325 * p_h2o, T),
+              'co2_g': 0., 'h2_g': 0.}
+        U0.update(wgs.COVERAGE0)
+        results = []
+        for analytic_jac in (False, True):
+            model = Model(T, wgs.ASITE, reactor='CSTR',
+                          analytic_jac=analytic_jac)
+            model.lattice = {sp['slab']: {sp['slab']: 6}}
+            model.add_reactions(rxns)
+            model.set_fixed(['co_g', 'h2o_g', 'h2_g', 'co2_g'])
+            model.set_initial_conditions(U0)
+            _, U, r = model.find_steady_state()
+            results.append((float(U['co']), float(r['co_ads'])))
+        np.testing.assert_allclose(results[1], results[0], rtol=1e-6)
+        # the response lowers the CO repulsion below theta_tot = 1
+        self.assertGreater(results[0][0], 0.47)
 
 
 class LatticeTest(unittest.TestCase):
