@@ -17,7 +17,14 @@ Earlier versions that generate Fortran and compile it with f2py are kept on
 branches: `fortran-sundials7` (SUNDIALS 7 Fortran 2003 interface) and
 `sundials4` (SUNDIALS 4.X FCMIX interface).
 
-### Installation with conda (recommended):
+### Installation from PyPI (recommended):
+#in an environment with Python >= 3.12 (e.g. a venv or a conda environment)<br>
+pip install micki<br>
+
+This installs Micki and all of its dependencies and is probably the simplest
+option for most users.
+
+### Installation with conda (for development):
 #fetch Micki and create a conda environment with all dependencies<br>
 git clone https://github.com/jrschmidt2/micki.git<br>
 cd micki<br>
@@ -26,12 +33,8 @@ conda activate micki<br>
 
 Python, numpy, sympy and ase come from conda-forge. sundials4py and Micki
 itself are not on conda-forge, so `environment.yml` installs them with pip
-inside the environment (Micki in editable mode, so changes in the clone take
-effect immediately).
-
-### Installation with pip:
-#in an environment with Python >= 3.12<br>
-pip install micki<br>
+inside the environment (Micki in editable mode from the clone, so changes
+take effect immediately).
 
 ### Testing:
 Run the test suite (about 15 seconds; includes a water-gas shift regression test) from the repository root:<br>
