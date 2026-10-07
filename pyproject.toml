@@ -18,7 +18,7 @@ requires-python = ">=3.12"
 dependencies = [
     "ase",
     "numpy>=2.0",
-    "sundials4py>=7.9",
+    "sundials4py>=7.9,<8",
     "sympy",
 ]
 classifiers = [

@@ -31,8 +31,18 @@ effect immediately).
 
 ### Installation with pip:
 #in an environment with Python >= 3.12<br>
-pip install git+https://github.com/jrschmidt2/micki.git<br>
+pip install micki<br>
 
 ### Testing:
 Run the test suite (about 15 seconds; includes a water-gas shift regression test) from the repository root:<br>
 python -m unittest discover -s tests -v
+
+### Releasing:
+Releases are published to PyPI automatically by GitHub Actions
+(`.github/workflows/publish.yml`, PyPI trusted publishing):
+
+1. Set the new version in `pyproject.toml` and commit it.
+2. Create a GitHub release with tag `v<version>` (e.g. `v2.0.0`).
+
+Publishing the release runs the tests, builds the package and uploads it to
+PyPI. The workflow refuses to publish if the tag does not match the version.

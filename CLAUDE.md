@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Micki is an object-oriented microkinetic modeling package in Python. Users build `Gas`/`Liquid`/`Adsorbate`/`Electron` species (thermochemistry from ASE `Atoms` + vibrational frequencies), combine them into `Reaction`s, add those to a `Model`, and integrate the resulting DAE system with SUNDIALS IDA through the official Python interface, sundials4py.
 
-Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3.12 environment, or `conda env create -f environment.yml` (conda-forge Python/numpy/sympy/ase; sundials4py and micki via pip, since neither is on conda-forge). Tested on Python 3.12 and 3.14. There is no linter config; `python -m pyflakes micki tests` is clean.
+Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3.12 environment, or `conda env create -f environment.yml` (conda-forge Python/numpy/sympy/ase; sundials4py and micki via pip, since neither is on conda-forge). Tested on Python 3.12 and 3.14. Published to PyPI as `micki` by `.github/workflows/publish.yml` (trusted publishing) when a GitHub release tagged `v<version>` is published; the tag must match `pyproject.toml`'s version, and versions can never be reused on PyPI. `sundials4py` is pinned `<8` because its API is still beta. There is no linter config; `python -m pyflakes micki tests` is clean.
 
 ## Dependencies / environment
 
