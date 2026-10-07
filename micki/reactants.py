@@ -15,7 +15,7 @@ from ase.units import mol, _hplanck, m, kg, _k, kB
 
 from micki.masses import masses
 from micki.io import parse_vasp_out
-from micki.utils import calculate_avg_vdw_radius
+from micki.utils import calculate_avg_vdw_radius, bar_to_molar
 
 
 class _Thermo:
@@ -196,7 +196,9 @@ class _Thermo:
                 'spin': self.spin,
                 'D': self.D,
                 'S': self.Sliq,
-                'rhoref': self.rho0,
+                # with a reference pressure, rho0 depends on T
+                'rhoref': 1. if getattr(self, 'pref', None) else self.rho0,
+                'pref': getattr(self, 'pref', None),
                 'sites': [site.label for site in self.sites],
                 'dE': self.dE}
 
@@ -316,7 +318,7 @@ class _Thermo:
 class _Fluid(_Thermo):
     """Master object for both liquids and gasses"""
     def __init__(self, atoms, label, freqs=None, symm=1, spin=0.,
-                 eref=None, rhoref=1., dE=0.):
+                 eref=None, rhoref=1., dE=0., pref=None):
         _Thermo.__init__(self)
         self.atoms = atoms
         self.freqs = freqs
@@ -326,7 +328,12 @@ class _Fluid(_Thermo):
         self.eref = eref
         self.linear = self._is_linear()
         self.ncut = 6 - self.linear + self.ts
+        if pref is not None and rhoref != 1.:
+            raise ValueError('Give either rhoref or pref, not both!')
         self.rho0 = rhoref
+        # reference pressure in bar; if given, the reference concentration
+        # rho0 = pref / RT (in M) follows the temperature
+        self.pref = pref
         self.dE = dE
         self._R = None
         if not np.all(self.freqs[self.ncut:] > 0):
@@ -342,9 +349,11 @@ class _Fluid(_Thermo):
             label = newlabel
         return self.__class__(self.atoms, label, self.freqs,
                               self.symm, self.spin, self.eref,
-                              self.rho0, self.dE)
+                              self.rho0, self.dE, self.pref)
 
     def _calc_q(self, T):
+        if self.pref is not None:
+            self.rho0 = bar_to_molar(self.pref, T)
         self._calc_qelec(T)
         self._calc_qtrans(T)
         self._calc_qrot(T)
@@ -400,7 +409,11 @@ class Electron(_Thermo):
 
 
 class Gas(_Fluid):
-    pass
+    """Ideal gas. The reference state of its free energy is the
+    concentration rhoref (in M, default 1 M) or, if pref is given, the
+    pressure pref (in bar; e.g. pref=1 for CatMap's convention). Rates do
+    not depend on the reference state, but reported free energies (and
+    barriers clipped with Reaction(..., clip=...)) do."""
 
 
 class Liquid(_Fluid):
@@ -506,9 +519,6 @@ class _Reactants:
 
             else:
                 raise NotImplementedError
-        self.reference_state = 1.
-        for species in self.species:
-            self.reference_state *= species.get_reference_state()
 
     def get_H(self, T=None):
         H = 0.
@@ -541,7 +551,12 @@ class _Reactants:
         return q
 
     def get_reference_state(self):
-        return self.reference_state
+        # not cached: a gas with a reference pressure has a
+        # temperature-dependent reference concentration
+        reference_state = 1.
+        for species in self.species:
+            reference_state *= species.get_reference_state()
+        return reference_state
 
     def copy(self):
         return self.__class__(self.species)

@@ -349,6 +349,10 @@ class Reaction:
             dS = (fluid.S['trans2D'] - fluid.S['trans']) * Slost
             dG = fluid.E['trans2D'] - fluid.E['trans'] - self.T * dS
             self.kfor = barr * _k * self.T / _hplanck * np.exp(-dG / (kB * self.T))
+            if self.dG_act is None:
+                # dG above depends on the fluid's reference state through
+                # its translational entropy (barr divides by it otherwise)
+                self.kfor /= self.reactants.get_reference_state()
             self.kfor *= self.scale['kfor']
         elif self.method == 'ER':
             # Collision Theory

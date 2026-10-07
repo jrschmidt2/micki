@@ -1,5 +1,13 @@
 import numpy as np
 from ase.data import vdw_radii
+from ase.units import _k, _Nav
+
+
+def bar_to_molar(p, T):
+    """Ideal-gas concentration (in M) at pressure p (in bar) and
+    temperature T (in K)."""
+    return p * 1e5 / (_k * T * _Nav * 1000.)
+
 
 def calculate_avg_vdw_radius(atoms, npoints=8001):
     if npoints % 2 == 0:

@@ -12,13 +12,14 @@ import unittest
 import warnings
 
 import numpy as np
+import sympy
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import wgs  # noqa: E402
-from micki import (Model, Reaction, Liquid, Electron,  # noqa: E402
+from micki import (Model, Reaction, Gas, Liquid, Electron,  # noqa: E402
                    EnergyReference, Lattice)
 from micki.db import read_from_db  # noqa: E402
 from micki.utils import calculate_avg_vdw_radius  # noqa: E402
@@ -165,6 +166,65 @@ class ModelTest(unittest.TestCase):
         ads.symm = 2
         with self.assertWarns(UserWarning):
             ads.get_S(T)
+
+    def test_reference_pressure(self):
+        # Gas(pref=1) is the ideal gas at 1 bar (CatMap's convention); rate
+        # constants do not depend on the reference state
+        from ase.thermochemistry import IdealGasThermo
+        from ase.db import connect
+        from micki.utils import bar_to_molar
+        T = 548.
+
+        def rate_constants(**gas_kw):
+            # no lateral interactions or energy shifts: the default
+            # (computed) BEP alpha depends on the gas reference state, and
+            # it only matters through those terms
+            sp = wgs.build_species()
+            for s in sp.values():
+                s.lateral, s.dE = 0., 0.
+            for name in ('co_g', 'co2_g'):
+                for key, val in gas_kw.items():
+                    setattr(sp[name], key, val)
+            rxns = [Reaction(sp['co_g'], sp['co'], method='STICK'),
+                    Reaction(sp['co_g'], sp['co'], method='EQUIL'),
+                    Reaction(sp['o'] + sp['co'], sp['co2_g'],
+                             ts=sp['o-co'])]
+            k = []
+            for rxn in rxns:
+                rxn.update(T=T, Asite=wgs.ASITE, L=0)
+                for x in (rxn.kfor, rxn.krev):
+                    k.append(float(sympy.sympify(x).subs(
+                        {s: 0 for s in sympy.sympify(x).free_symbols})))
+            return sp, np.array(k)
+
+        sp_m, k_m = rate_constants()
+        sp_b, k_b = rate_constants(pref=1.)
+        _, k_2 = rate_constants(rho0=2.)
+        np.testing.assert_allclose(k_b, k_m, rtol=1e-12)
+        np.testing.assert_allclose(k_2, k_m, rtol=1e-12)
+
+        gas = sp_b['co_g']
+        self.assertAlmostEqual(gas.get_reference_state(), bar_to_molar(1., T),
+                               places=14)
+        atoms = gas.atoms.copy()
+        atoms.pbc = False
+        atoms.set_masses(gas.mass)
+        G_ase = IdealGasThermo(
+            vib_energies=gas.freqs[gas.ncut:], geometry='linear',
+            potentialenergy=gas.potential_energy + gas.dE, atoms=atoms,
+            symmetrynumber=gas.symm, spin=gas.spin).get_gibbs_energy(
+                T, pressure=1e5, verbose=False)
+        self.assertAlmostEqual(gas.get_G(T), G_ase, places=10)
+
+        with self.assertRaises(ValueError):
+            Gas(gas.atoms, 'x', gas.freqs, rhoref=2., pref=1.)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(os.path.join(tmp, 'species.json'))
+            gas.save_to_db(db)
+            read = read_from_db(db)['co_g']
+        self.assertEqual(read.pref, 1.)
+        read.eref = gas.eref  # not stored in the db
+        self.assertAlmostEqual(read.get_G(T), gas.get_G(T), places=12)
 
     def test_energy_reference_from_atoms(self):
         h2 = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]])

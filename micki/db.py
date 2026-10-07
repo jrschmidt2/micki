@@ -30,13 +30,14 @@ def row_to_thermo(row):
     spin = get_data(row, 'spin')
     D = get_data(row, 'D')
     S = get_data(row, 'S')
+    pref = row.data.get('pref')  # absent in databases written before 2.1
 
     if thermo == 'Adsorbate':
         return Adsorbate(row.toatoms(), name, freqs,
                          ts=ts, sites=sites, dE=dE, symm=symm)
     elif thermo == 'Gas':
         return Gas(row.toatoms(), name, freqs,
-                   symm=symm, spin=spin, rhoref=rhoref, dE=dE)
+                   symm=symm, spin=spin, rhoref=rhoref, dE=dE, pref=pref)
     elif thermo == 'Liquid':
         return Liquid(row.toatoms(), name, freqs,
                       symm=symm, spin=spin, D=D, S=S, rhoref=rhoref, dE=dE)
