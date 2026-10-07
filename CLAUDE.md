@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Micki is an object-oriented microkinetic modeling package in Python. Users build `Gas`/`Liquid`/`Adsorbate`/`Electron` species (thermochemistry from ASE `Atoms` + vibrational frequencies), combine them into `Reaction`s, add those to a `Model`, and integrate the resulting DAE system with SUNDIALS IDA through the official Python interface, sundials4py.
 
-Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3.12 environment, or `conda env create -f environment.yml` (conda-forge Python/numpy/sympy/ase; sundials4py and micki via pip, since neither is on conda-forge). Tested on Python 3.12 and 3.14. Published to PyPI as `micki` by `.github/workflows/publish.yml` (trusted publishing) when a GitHub release tagged `v<version>` is published; the tag must match `pyproject.toml`'s version, and versions can never be reused on PyPI. `sundials4py` is pinned `<8` because its API is still beta. There is no linter config; `python -m pyflakes micki tests` is clean.
+Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3.12 environment, or `conda env create -f environment.yml` (conda-forge Python/numpy/sympy/ase; sundials4py and micki via pip, since neither is on conda-forge). Tested on Python 3.12 and 3.14. Published on PyPI as `micki` (see Releasing). `sundials4py` is pinned `<8` because its API is still beta. There is no linter config; `python -m pyflakes micki tests` is clean.
 
 ## Dependencies / environment
 
@@ -21,6 +21,15 @@ python -m unittest discover -s tests -k test_difference_quotient_jacobian  # one
 ```
 
 `tests/test_wgs.py` is a regression test on a water-gas-shift model (`tests/wgs.py`, database `tests/data/wgs.json`): for 21 reaction conditions it solves a CSTR to steady state, then a PFR, and compares TOFs, CSTR steady states and PFR outlet states with `tests/data/wgs_reference.json` (rtol 1e-6), once with each Jacobian mode. Conditions follow Table 5 of Grabow et al., J. Phys. Chem. C 2008, 112, 4608 (the original `wgs_tof.py` had y(H2) of condition 13 and y(CO) of condition 17 mistyped). Apart from those two conditions, the reference agrees with the original Fortran/SUNDIALS 4.X results to ~1e-10. After an intentional change in results, regenerate it with `python tests/wgs.py` and explain the change in the commit message.
+
+## Releasing
+
+- To release: bump `version` in `pyproject.toml`, commit and push, then publish a GitHub release tagged `v<version>` (e.g. `v2.0.1`) in the GitHub web UI. `.github/workflows/publish.yml` then checks that the tag matches the version, installs the package and runs the tests, builds and `twine check`s the sdist and wheel, and uploads them with PyPI trusted publishing (no API token).
+- The PyPI trusted publisher for `micki` is: owner `jrschmidt2`, repository `micki`, workflow `publish.yml`, environment `pypi`. Renaming the workflow file or the environment breaks publishing until the publisher on PyPI matches again (publishers cannot be edited on PyPI: remove and re-add).
+- If the publish job fails with `invalid-publisher`, its error annotation lists the token claims GitHub sent (repository, `workflow_ref`, environment); compare them with the PyPI publisher. After fixing the PyPI side, use "Re-run failed jobs" on the run; no new tag or release is needed. (This happened for v2.0.0: the publisher said `publish.yaml`.)
+- PyPI versions are immutable: a version that was uploaded can never be replaced or reused (a failed upload does not use it up). The PyPI project page shows the README packaged at the release tag, so README changes appear there only with the next release.
+- "Run workflow" (`workflow_dispatch`) in the Actions tab runs only the build and tests (tag check and publish job are skipped); use it to test changes to the workflow. The `download-artifact` step runs only in the publish job.
+- The actions are on their Node 24 major versions (`checkout` v7, `setup-python` v7, `upload-artifact` v7, `download-artifact` v8); keep upload/download-artifact versions compatible when bumping. CI uses Python 3.12, the minimum in `requires-python`.
 
 ## Architecture
 
