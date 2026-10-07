@@ -54,8 +54,12 @@ class ModelAnalysisTest(unittest.TestCase):
 
     def test_campbell_rate_control_sums_to_one(self):
         # all rate constants scaled together just scale the rate in a CSTR
-        # with fixed gas concentrations
-        total = sum(float(self.analysis.campbell_rate_control(name))
+        # with fixed gas concentrations. The co_ads net rate is a small
+        # difference of large fluxes, so its steady-state value carries
+        # ~1e-7 relative noise; the default step (1e-3) turns that into
+        # ~1e-4 noise in the sum, a 1e-2 step into ~1e-5.
+        total = sum(float(self.analysis.campbell_rate_control(name,
+                                                              scale=1e-2))
                     for name in self.rxns)
         self.assertAlmostEqual(total, 1.0, places=4)
 

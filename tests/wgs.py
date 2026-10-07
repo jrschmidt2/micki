@@ -18,8 +18,8 @@ in fluid free energies was added (TOFs x1.33-1.45), then the sign of the
 adsorbate symmetry number was corrected (it divides the number of
 orientations), symm = 2 was removed from the ho-h and o-co transition states,
 and the co-oh transition state was given two sites like the other transition
-states (TOFs x1.3-3.2). The energy shifts (dE) below were calibrated before
-these fixes and have not been refitted.
+states (TOFs x1.3-3.2), then the OH and COOH energy shifts were refitted to
+the experimental TOFs (RMS log-error 0.131, as before the fixes).
 """
 
 import json
@@ -89,9 +89,11 @@ def build_species():
     sp['co'].dE = 0.09496182099234107
     sp['h'].dE = 0.236689058 / 2.0
 
-    # Shift energy of OH and COOH based on optimization results
-    sp['oh'].dE = -0.2171335
-    sp['cooh'].dE = -0.0515426
+    # Shift energy of OH and COOH to fit the experimental TOFs (least squares
+    # in ln TOF over all 21 conditions; the original fit, made before the
+    # free-energy fixes described above, was -0.2171335 and -0.0515426)
+    sp['oh'].dE = -0.2280
+    sp['cooh'].dE = 0.1603
 
     # Lateral interactions
     sp['co'].lateral = 2 * 0.784423808 * sp['co'].symbol
