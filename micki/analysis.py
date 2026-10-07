@@ -106,6 +106,12 @@ class ModelAnalysis(object):
         return kmid * (rhigh - rlow) / (self.rmid * (khigh - klow))
 
     def thermodynamic_rate_control(self, names, dg=None):
+        """Degree of thermodynamic rate control, -(kT/r) dr/dG.
+
+        The free energies of all species in `names` are shifted together
+        by -dg and +dg (default 0.001 kT) and the derivative is taken by
+        central differences.
+        """
         T = self.model.T
         if dg is None:
             dg = 0.001 * kB * T
@@ -177,7 +183,8 @@ class ModelAnalysis(object):
 #        self.check_converged(U2, r2)
         rhigh = r2[self.reaction_name]
 
-        return (rlow - rhigh) * kB * T / (self.rmid * dg)
+        # central difference: the two rates are 2 * dg apart in free energy
+        return (rlow - rhigh) * kB * T / (self.rmid * 2 * dg)
 
     def activation_barrier(self, dT=0.01):
         T = self.model.T

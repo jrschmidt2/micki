@@ -85,6 +85,28 @@ class FastPathTest(unittest.TestCase):
         self.assertTrue(np.isnan(r[0]) or np.isinf(r[0]))
         self.assertEqual(r[1], 1.0)
 
+    def test_nan_handling_matches_numpy(self):
+        # Python's max/min are order dependent for nan and abs() of a
+        # complex intermediate gives its modulus; numpy gives nan (and both
+        # map Heaviside(nan) to 1)
+        a, b, v = sym.symbols('a b v')
+        rates = [sym.Max(a, b), sym.Max(b, a), sym.Min(a, b),
+                 sym.Heaviside(a - 0.5) * b, sym.Abs(a), sym.Abs(b**0.5)]
+        s = IDASolver([a, b], [v], [1 - a - b], rates, [[1] * 6, [-1] * 6],
+                      [1., 1.])
+        s.initialize([0.1, 0.2], 1e-10, np.array([1e-16, 1e-16]))
+        self.assertTrue(s._fast)
+        for y in ([np.nan, 0.2], [0.3, -0.2]):
+            y = np.array(y)
+            with np.errstate(invalid='ignore'):
+                fast = s.rates(y)
+                s._fast = False
+                slow = s.rates(y)
+                s._fast = True
+            np.testing.assert_array_equal(np.isnan(fast), np.isnan(slow))
+            np.testing.assert_allclose(fast[~np.isnan(fast)],
+                                       slow[~np.isnan(slow)])
+
     def test_fast_and_numpy_paths_agree(self):
         s = ComplexStepJacobianTest('setUp')
         s.setUp()

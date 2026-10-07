@@ -125,7 +125,7 @@ class Reaction(object):
         self.T = None
         self.Asite = None
         self.L = None
-        self.scale_params = ['dH', 'dS', 'dH_act', 'dS_act', 'kfor', 'krev']
+        self.scale_params = ['dH_act', 'dS_act', 'kfor', 'krev']
         self.alpha = None
         self.reversible = reversible
 
@@ -173,18 +173,18 @@ class Reaction(object):
 
         self.dground = dground
 
+    def _check_scale_param(self, param):
+        if param not in self.scale:
+            raise ValueError('{} is not a valid scaling parameter; valid '
+                             'names are {}'.format(param, self.scale_params))
+
     def get_scale(self, param):
-        try:
-            return self.scale[param]
-        except KeyError:
-            print("{} is not a valid scaling parameter name!".format(param))
-            return None
+        self._check_scale_param(param)
+        return self.scale[param]
 
     def set_scale(self, param, value):
-        try:
-            self.scale[param] = value
-        except KeyError:
-            print("{} is not a valid scaling parameter name!".format(param))
+        self._check_scale_param(param)
+        self.scale[param] = value
 
     def update(self, T=None, Asite=None, L=None, force=False):
         if not force and not self.is_update_needed(T, Asite, L):
@@ -197,9 +197,7 @@ class Reaction(object):
         self.Asite = Asite
         self.L = L
         self.dH = self.products.get_H(T) - self.reactants.get_H(T)
-#        self.dH *= self.scale['dH']
         self.dS = self.products.get_S(T) - self.reactants.get_S(T)
-#        self.dS *= self.scale['dS']
         self.dG = self.dH - self.T * self.dS
         if self.ts is not None:
             for species in self.ts:
@@ -452,7 +450,7 @@ class Model(object):
         for name, reaction in reactions.items():
             assert isinstance(reaction, Reaction)
             if reaction in self._reactions:
-                return
+                continue
             self._reactions.append(reaction)
             self.reactions[name] = reaction
             for species in reaction.species:

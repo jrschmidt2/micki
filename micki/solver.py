@@ -5,6 +5,7 @@ turned into NumPy functions with sympy.lambdify and integrated with IDA
 through the official SUNDIALS Python interface.
 """
 
+import math
 import warnings
 
 import numpy as np
@@ -29,6 +30,29 @@ def _complex_step_abs(z):
 # compares complex numbers by their real part first); Abs needs the
 # replacement above. re, im, conjugate and arg are not supported.
 _LAMBDIFY_MODULES = [{'Abs': _complex_step_abs}, 'numpy']
+
+
+# Replacements for the fast math-module functions so that they give the same
+# results as the numpy versions for nan arguments (Python's max/min depend on
+# argument order then) and fall back to numpy for complex intermediates
+# (numpy gives nan, Python's abs the modulus). Heaviside needs nothing: both
+# printers map nan to 1.
+def _math_max(*args):
+    return math.nan if any(a != a for a in args) else max(args)
+
+
+def _math_min(*args):
+    return math.nan if any(a != a for a in args) else min(args)
+
+
+def _math_abs(x):
+    if isinstance(x, complex):
+        raise TypeError('complex value')
+    return abs(x)
+
+
+_MATH_MODULES = [{'Max': _math_max, 'Min': _math_min, 'Abs': _math_abs},
+                 'math']
 
 
 class IDASolver(object):
@@ -75,10 +99,11 @@ class IDASolver(object):
         self._fixed_list = self.fixed_values.tolist()
         try:
             self._vac_math = sym.lambdify([symbols, fixed_symbols],
-                                          list(vac_exprs), 'math', cse=True)
+                                          list(vac_exprs), _MATH_MODULES,
+                                          cse=True)
             self._rates_math = sym.lambdify(
-                [symbols, vac_symbols, fixed_symbols], list(rates), 'math',
-                cse=True)
+                [symbols, vac_symbols, fixed_symbols], list(rates),
+                _MATH_MODULES, cse=True)
             self._fast = True
         except Exception:
             self._fast = False
