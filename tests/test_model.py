@@ -141,6 +141,31 @@ class ModelTest(unittest.TestCase):
             self.assertAlmostEqual(float(rxn.keq) / K, 1., places=10,
                                    msg=gas_name)
 
+    def test_symmetry_number_divides_orientations(self):
+        # sigma = (lattice orientations) / symm (Hermes et al. 2019, eqs.
+        # 6-7): an end-to-end symmetric two-site species on a hexagonal
+        # lattice has 6 / 2 = 3 orientations
+        from ase.units import kB
+        T = 548.
+        S = {}
+        for symm in (1, 2):
+            sp = wgs.build_species()
+            ts = sp['o-h-oh']
+            ts.lattice = Lattice({sp['slab']: {sp['slab']: 6}})
+            ts.symm = symm
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                S[symm] = ts.get_S(T)
+        self.assertAlmostEqual(S[2] - (ts.S['elec'] + ts.S['vib']),
+                               kB * np.log(3), places=12)
+        self.assertAlmostEqual((S[2] - S[1]) / kB, -np.log(2), places=12)
+        # a single-site species has no orientations counted, so symm > 1
+        # only reduces its partition function
+        ads = wgs.build_species()['co']
+        ads.symm = 2
+        with self.assertWarns(UserWarning):
+            ads.get_S(T)
+
     def test_energy_reference_from_atoms(self):
         h2 = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]])
         h2.calc = SinglePointCalculator(h2, energy=-6.8)

@@ -449,9 +449,23 @@ class Adsorbate(_Thermo):
         self.E['tot'] = self.E['elec'] + self.E['vib']
         self.H = self.E['tot']
         self.S['tot'] = self.S['elec'] + self.S['vib']
-        self.S['tot'] += kB * np.log(self.symm)
+        # Configurational entropy kB ln(sigma), where sigma is the number of
+        # distinguishable orientations: the lattice counts the orientations
+        # of multidentate species, and the symmetry number symm divides out
+        # those that are identical by symmetry, e.g. symm = 2 for an
+        # end-to-end symmetric species (Hermes et al., J. Chem. Phys. 151,
+        # 014112 (2019), eqs. 6-7; Hermes thesis eq. 6.1).
+        S_conf = 0.
         if self.lattice is not None:
-            self.S['tot'] += self.lattice.get_S_conf(self.sites)
+            S_conf = self.lattice.get_S_conf(self.sites)
+        if self.symm != 1 and S_conf - kB * np.log(self.symm) < -1e-12 * kB:
+            warnings.warn('{}: symm = {} exceeds the number of orientations '
+                          'counted by the lattice ({:g}), so its partition '
+                          'function is reduced. Orientations are only '
+                          'counted for species occupying several sites on a '
+                          'lattice.'.format(self.label, self.symm,
+                                            np.exp(S_conf / kB)))
+        self.S['tot'] += S_conf - kB * np.log(self.symm)
 
 
     def copy(self, newlabel=None):
