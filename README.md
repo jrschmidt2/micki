@@ -3,6 +3,17 @@
 A modular, extensible, robust object-oriented microkinetic modeling package
 written in Python.
 
+### Documentation:
+See the [documentation](https://github.com/jrschmidt2/micki/blob/master/docs/index.md):
+a [user guide](https://github.com/jrschmidt2/micki/blob/master/docs/user-guide.md),
+a complete [reference](https://github.com/jrschmidt2/micki/blob/master/docs/reference.md)
+of all classes and options, [sensitivity analysis](https://github.com/jrschmidt2/micki/blob/master/docs/analysis.md),
+[CatMap conventions](https://github.com/jrschmidt2/micki/blob/master/docs/catmap.md)
+and a [water-gas shift example](https://github.com/jrschmidt2/micki/blob/master/docs/examples/wgs.md).
+The theory is described in E. D. Hermes, A. N. Janes, J. R. Schmidt,
+J. Chem. Phys. 151, 014112 (2019), https://doi.org/10.1063/1.5109116; please
+cite it if you use Micki.
+
 ### DEPENDENCIES (installed automatically, see below):
  * Python >= 3.12
  * sundials4py (the official SUNDIALS Python interface; >= 7.9, beta)
@@ -41,39 +52,11 @@ Run the test suite (about 15 seconds; includes a water-gas shift regression test
 python -m unittest discover -s tests -v
 
 ### Comparing with CatMap:
-Micki's defaults follow Hermes et al., J. Chem. Phys. 151, 014112 (2019).
-`micki.set_conventions('catmap')` (or `with micki.conventions('catmap'):`
-around building species and reactions) switches the defaults to CatMap's:
-gases at 1 bar with standard atomic weights, `clip='coverage'`, `alpha=0.5`,
-transition states that follow only the lateral interactions of their
-initial and final states (not `dE` shifts, which then act like energy
-changes in CatMap, also in thermodynamic rate control), and a warning if a
-lattice is set. Explicitly given arguments still win. The individual options
-are:
-
-| CatMap | Micki |
-|---|---|
-| gas free energies at 1 bar, pressures in bar | `Gas(..., pref=1)`; `micki.utils.bar_to_molar(p, T)` for concentrations |
-| transition state raised to max(IS, FS, TS) at the current coverages | `Reaction(..., clip='coverage')` |
-| step without a transition state (barrierless) | `method='EQUIL', clip='coverage'` |
-| non-activated adsorption (collision theory prefactor) | `method='STICK', clip='coverage'` |
-| first-order interactions, linear/piecewise-linear response | `micki.lateral.first_order(adsorbates, eps, response=...)` |
-| transition-state interactions weighted between IS and FS | `Reaction(..., alpha=w)` (`initial_state` w=0, `intermediate_state` 0.5, `final_state` 1) |
-| explicit transition-state interaction parameters | TS rows in `first_order`, `Reaction(..., explicit_ts=True)` |
-| no configurational entropy | no `Model.lattice` |
-
-`tests/catmap_wgs.py` builds a water-gas shift model under
-`micki.conventions('catmap')`;
-`tests/test_catmap.py` checks it against CatMap's own solution (agreement
-~1e-13), as well as two further models (ammonia synthesis; ethylene
-hydrogenation with two site types) that CatMap solved natively with its own
-thermochemistry (free energies agree to ~1e-15 eV, rate constants to ~1e-14,
-coverages to ~1e-13). CatMap itself also hard-codes CODATA-2010 kB and h (a
-~5e-6 effect on rates) and, in its collision-theory prefactor, the atomic
-mass unit and electron volt (5e-8), ignores the number of sites of
-multidentate species in its site balance, and fits interaction and
-transition-state energies to its descriptors unless told otherwise; for a
-one-to-one comparison use the energies and interaction matrix CatMap reports.
+`micki.set_conventions('catmap')` switches Micki's defaults to CatMap's
+conventions (gas reference state, barrier clipping, transition-state
+interactions, masses), and individual options are available too. Tests
+compare Micki with CatMap's own solutions of several models (agreement
+~1e-13). See [CatMap conventions](https://github.com/jrschmidt2/micki/blob/master/docs/catmap.md).
 
 ### Releasing:
 Releases are published to PyPI automatically by GitHub Actions

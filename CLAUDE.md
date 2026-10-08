@@ -13,6 +13,10 @@ Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3
 - Python ≥3.12, `sundials4py` (≥7.9, beta; wheels bundle SUNDIALS, so no compiler or LAPACK is needed), `numpy` ≥2, `sympy`, `ase`.
 - Older implementations that generated Fortran, compiled it with f2py and linked SUNDIALS + LAPACK are on branches `fortran-sundials7` (SUNDIALS 7, F2003 interface; last Fortran version, includes all bug fixes and the regression test) and `sundials4` (SUNDIALS 4.X FCMIX).
 
+## Documentation
+
+User documentation is Markdown in `docs/`, rendered by GitHub (no build): `index.md` (overview, units, citation), `user-guide.md`, `reference.md` (every class, parameter and option; keep it complete when adding options), `analysis.md`, `catmap.md`, `examples/wgs.md`. Theory is cited (Hermes et al., J. Chem. Phys. 151, 014112 (2019); the AIP-copyrighted paper text and figures are not copied). The README links the docs with absolute GitHub URLs (the PyPI page shows the README). Public classes have NumPy-style docstrings. `tests/test_docs.py` runs the first code block of `user-guide.md` and of `analysis.md` and compares their printed output with the documented output block, so update both when results change.
+
 ## Tests
 
 ```
