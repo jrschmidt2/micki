@@ -104,7 +104,8 @@ Electron(E, self_repulsion, label)
 ```python
 Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
          dground=False, reversible=True, clip=..., alpha=...,
-         explicit_ts=False)
+         explicit_ts=False, check_balance=True)
+Reaction.from_string(expression, species, **kwargs)
 ```
 
 | Parameter | Default | Meaning |
@@ -119,6 +120,22 @@ Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
 | `clip` | `None` *(conventions: `'coverage'` for TST, EQUIL, STICK)* | Negative barriers: `None` raises at zero coverage; `'zero_coverage'` (TST) clips once at zero coverage; `'coverage'` (TST, EQUIL, STICK, `dG_act`) uses Max(ΔG‡, ΔG, 0) at the current coverages. |
 | `alpha` | `None` = computed *(conventions: 0.5)* | Weight of the products' coverage terms in the transition-state energy; computed BEP-style if `None`. |
 | `explicit_ts` | `False` | Transition-state energy from the TS species only (with `ts.lateral`). |
+| `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms (empty sites and electrons not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
+
+`Reaction.from_string(expression, species, **kwargs)` builds a reaction from
+`'reactants -> products'` or `'reactants <-> ts -> products'`. `->` and `<->`
+are interchangeable. Terms are labels joined by `+`, with optional integer
+coefficients (`2 h`, `2*h`, `2h`). Empty sites are optional, and ignored in the
+transition-state part. `species` is a dict `{label: species}` or a list of
+species. The keyword arguments are those of `Reaction`.
+
+```python
+reactions_from_strings(species, reactions)
+```
+
+Returns `{name: Reaction}` for `Model.add_reactions`. `reactions` maps names to
+an expression or to `(expression, {keyword arguments})`. Errors name the
+reaction.
 
 Under the CatMap conventions, transition states also ignore the `dE` of the
 reactants and products (`reaction.ts_follows_dE = False`). An explicit

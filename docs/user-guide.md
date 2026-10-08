@@ -20,7 +20,7 @@ from ase import Atoms
 from ase.build import molecule
 from ase.calculators.singlepoint import SinglePointCalculator
 
-from micki import Gas, Adsorbate, Reaction, Model
+from micki import Gas, Adsorbate, Model, reactions_from_strings
 from micki.utils import bar_to_molar
 
 
@@ -53,11 +53,12 @@ o_co = Adsorbate(with_energy(Atoms('CO2'), -1.70), 'o-co',
                         0.015, 0.011],
                  ts=True, sites=[slab, slab])
 
-reactions = {
-    'co_ads': Reaction(co_g, co, method='STICK'),
-    'o2_ads': Reaction(o_g, 2 * o, ts=o_o),
-    'co_ox': Reaction(co + o, co2_g, ts=o_co),
-}
+species = [co_g, o_g, co2_g, slab, co, o, o_o, o_co]
+reactions = reactions_from_strings(species, {
+    'co_ads': ('co_g -> co', {'method': 'STICK'}),
+    'o2_ads': 'o2_g <-> o-o -> 2 o',
+    'co_ox': 'co + o <-> o-co -> co2_g',
+})
 
 T = 500.
 model = Model(T, Asite=7e-20, reactor='CSTR')
@@ -167,14 +168,46 @@ the computed α and clipped barriers.
 
 ## Reactions
 
+Reactions can be written as strings of species labels:
+
 ```python
-Reaction(reactants, products, ts=None, method=None, ...)
+Reaction.from_string('co + o <-> o-co -> co2_g', sp)
+Reaction.from_string('h2_g -> 2 h', sp, method='STICK')
 ```
 
-Reaction sides are species combined with `+` and `*`: `2 * o`, `co + o`,
-`sp['cooh'] + sp['slab']`. Missing empty sites are added automatically to
-balance the sites on both sides. In the example, `co_g -> co` becomes
-`co_g + slab -> co`.
+- **Syntax:** `reactants -> products`, or `reactants <-> ts -> products` with
+  a transition state (CatMap's form).
+  - `->` and `<->` are interchangeable; every step is reversible unless
+    `reversible=False`.
+  - Terms are labels joined by `+`, each with an optional integer coefficient
+    (`2 h`, `2*h` or `2h`).
+- **Species lookup:** `sp` is a dict `{label: species}`, as `read_from_db`
+  returns, or a list of species. An unknown label raises an error.
+- **Other options:** keyword arguments (`method`, `clip`, …) go to `Reaction`.
+- **A whole mechanism at once:** `reactions_from_strings(sp, {name: expression
+  or (expression, {options})})` builds the dict for `Model.add_reactions`, as in
+  the example above.
+
+Equivalently, build the sides from species objects with `+` and `*`:
+
+```python
+Reaction(reactants, products, ts=None, method=None, ...)
+Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=sp['o-co'])
+Reaction(sp['h2_g'], 2 * sp['h'], method='STICK')
+```
+
+**Empty sites:** missing ones are added automatically to balance the sites on
+both sides. In the example, `co_g -> co` becomes `co_g + slab -> co`. In a
+string, empty sites may be written out (as CatMap does) or left out. In the
+transition-state part they are ignored.
+
+**Atom balance:** every reaction checks that its reactants, products and
+transition state contain the same atoms, and raises an error otherwise.
+- Empty sites and electrons are not counted.
+- An adsorbate whose structure includes its site's atoms (e.g. a DFT slab) is
+  counted without them.
+- `check_balance=False` turns the check off for deliberately unbalanced steps,
+  e.g. lumped species.
 
 ### Rate laws
 

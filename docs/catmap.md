@@ -77,6 +77,9 @@ and builds it in micki:
 - **Rate laws:** steps with a transition state are `TST`, steps without one
   `EQUIL`, and non-activated ones `STICK` (with `Model(..., Asite=)` from
   CatMap's `A_site` in Å² × 1e-20).
+- **Reaction expressions:** `Reaction.from_string` reads CatMap's
+  `'IS <-> TS -> FS'` form directly, given a dict that maps CatMap's names
+  (including `*_s` for empty sites) to micki species.
 - **Interactions:** `first_order` with CatMap's adsorbate interaction matrix.
 
 Use CatMap's own numbers where it computes them itself rather than reading

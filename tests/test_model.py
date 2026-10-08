@@ -538,6 +538,105 @@ class ConventionsTest(unittest.TestCase):
                 pass
 
 
+class ReactionStringTest(unittest.TestCase):
+    """Reaction.from_string, reactions_from_strings, atom balance."""
+
+    T = 548.
+
+    @classmethod
+    def setUpClass(cls):
+        warnings.simplefilter('ignore')
+        cls.sp = wgs.build_species()
+
+    def _constants(self, rxn):
+        rxn.update(T=self.T, Asite=wgs.ASITE, L=0)
+        return [float(sympy.sympify(k).subs(
+            {s: 0.1 for s in sympy.sympify(k).free_symbols}))
+            for k in (rxn.keq, rxn.kfor, rxn.krev)]
+
+    def test_same_as_operators(self):
+        sp = self.sp
+        pairs = [
+            (Reaction.from_string('co + o <-> o-co -> co2_g', sp),
+             Reaction(sp['o'] + sp['co'], sp['co2_g'], ts=sp['o-co'])),
+            (Reaction.from_string('h2_g -> 2 h', sp, method='STICK'),
+             Reaction(sp['h2_g'], 2 * sp['h'], method='STICK')),
+            (Reaction.from_string('h2_g + 2*slab -> 2h', sp, method='STICK'),
+             Reaction(sp['h2_g'], 2 * sp['h'], method='STICK')),
+            (Reaction.from_string('cooh + slab <-> oco-h + slab -> co2_g + h',
+                                  sp),
+             Reaction(sp['cooh'] + sp['slab'], sp['co2_g'] + sp['h'],
+                      ts=sp['oco-h'])),
+            (Reaction.from_string('2 oh -> o + h2o', list(sp.values()),
+                                  method='DIEQUIL'),
+             Reaction(2 * sp['oh'], sp['o'] + sp['h2o'], method='DIEQUIL')),
+        ]
+        for new, old in pairs:
+            self.assertEqual(sorted(s.label for s in new.reactants),
+                             sorted(s.label for s in old.reactants))
+            self.assertEqual(sorted(s.label for s in new.products),
+                             sorted(s.label for s in old.products))
+            self.assertEqual(new.method, old.method)
+            np.testing.assert_allclose(self._constants(new),
+                                       self._constants(old), rtol=1e-12)
+        # the transition-state part ignores empty sites
+        self.assertEqual([s.label for s in pairs[3][0].ts], ['oco-h'])
+
+    def test_catmap_names(self):
+        # CatMap's syntax with a dict mapping its names to micki species
+        sp = self.sp
+        names = {'CO_g': sp['co_g'], 'H2_g': sp['h2_g'], '*_s': sp['slab'],
+                 'CO_s': sp['co'], 'O_s': sp['o'], 'H_s': sp['h'],
+                 'O-CO_s': sp['o-co'], 'CO2_g': sp['co2_g']}
+        for expression, old in [
+                ('CO_g + *_s -> CO_s',
+                 Reaction(sp['co_g'], sp['co'])),
+                ('H2_g + 2*_s -> 2H_s',
+                 Reaction(sp['h2_g'], 2 * sp['h'])),
+                ('CO_s + O_s <-> O-CO_s + *_s -> CO2_g + 2*_s',
+                 Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=sp['o-co']))]:
+            new = Reaction.from_string(expression, names)
+            self.assertEqual(sorted(s.label for s in new.reactants),
+                             sorted(s.label for s in old.reactants))
+            self.assertEqual(sorted(s.label for s in new.products),
+                             sorted(s.label for s in old.products))
+            np.testing.assert_allclose(self._constants(new),
+                                       self._constants(old), rtol=1e-12)
+
+    def test_errors(self):
+        sp = self.sp
+        for expression in ('co + o', 'co -> o -> co2_g -> o',
+                           'co + -> o', 'cO -> co_g', '0 co -> co_g',
+                           'co + o <-> slab -> co2_g', 'c o -> co_g'):
+            with self.assertRaises(ValueError, msg=expression):
+                Reaction.from_string(expression, sp)
+        with self.assertRaisesRegex(ValueError, 'twice'):
+            Reaction.from_string('co + o <-> o-co -> co2_g', sp,
+                                 ts=sp['o-co'])
+
+    def test_balance(self):
+        sp = self.sp
+        with self.assertRaisesRegex(ValueError, 'conserve atoms'):
+            Reaction(sp['co_g'], sp['o'])
+        with self.assertRaisesRegex(ValueError, 'transition state'):
+            Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=sp['co-oh'])
+        with self.assertRaisesRegex(ValueError, 'conserve atoms'):
+            Reaction.from_string('co_g -> o', sp)
+        Reaction(sp['co_g'], sp['o'], check_balance=False)
+
+    def test_reactions_from_strings(self):
+        sp = self.sp
+        rxns = micki.reactions_from_strings(sp, {
+            'co_ads': ('co_g -> co', {'method': 'STICK'}),
+            'co_ox': 'co + o <-> o-co -> co2_g',
+        })
+        self.assertEqual(list(rxns), ['co_ads', 'co_ox'])
+        self.assertEqual(rxns['co_ads'].method, 'STICK')
+        self.assertEqual(rxns['co_ox'].method, 'TST')
+        with self.assertRaisesRegex(ValueError, 'Reaction bad'):
+            micki.reactions_from_strings(sp, {'bad': 'co -> nothing'})
+
+
 class LatticeTest(unittest.TestCase):
 
     def test_update_site_names(self):

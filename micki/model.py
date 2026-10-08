@@ -1,8 +1,10 @@
 """Microkinetic modeling objects"""
 
+import re
 import warnings
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
+from collections.abc import Mapping
 
 import numpy as np
 import sympy as sym
@@ -23,6 +25,79 @@ def _at_zero_coverage(expr):
     if isinstance(expr, sym.Basic):
         expr = expr.subs({symbol: 0 for symbol in expr.free_symbols})
     return float(expr)
+
+
+def _is_vacancy(species):
+    """An empty-site species: an adsorbate that occupies no sites."""
+    return (isinstance(species, Adsorbate) and not species.sites
+            and not species.ts)
+
+
+def _composition(species):
+    """Element counts of a species without the surface: if an adsorbate's
+    structure contains the atoms of its first site species (e.g. the slab),
+    they are removed once."""
+    if species.atoms is None:
+        return Counter()
+    counts = Counter(species.atoms.get_chemical_symbols())
+    if isinstance(species, Adsorbate) and species.sites \
+            and species.sites[0].atoms is not None:
+        site = Counter(species.sites[0].atoms.get_chemical_symbols())
+        if site and all(counts[e] >= n for e, n in site.items()):
+            counts -= site
+    return counts
+
+
+def _side_composition(side):
+    """Element counts of a reaction side, without empty sites and
+    electrons."""
+    total = Counter()
+    for species in side:
+        if not _is_vacancy(species) and not isinstance(species, Electron):
+            total += _composition(species)
+    return total
+
+
+def _formula(counts):
+    return ''.join(e + (str(n) if n > 1 else '')
+                   for e, n in sorted(counts.items())) or 'nothing'
+
+
+_ARROW = re.compile(r'<->|->')
+_COEFFICIENT = re.compile(r'(\d+)(.*)$', re.S)
+
+
+def _parse_term(term, species, expression):
+    """'2 h', '2*h', '2h' -> (2, h); a term that is a label is a label (so
+    are CatMap's '*_s' and '2*_s' -> (2, '*_s'))."""
+    if term in species:
+        return 1, species[term]
+    match = _COEFFICIENT.match(term)
+    if match:
+        n, rest = int(match.group(1)), match.group(2).strip()
+        for label in (rest, rest[1:].strip() if rest[:1] == '*' else None):
+            if label and label in species:
+                if n < 1:
+                    raise ValueError('Coefficient 0 in {!r}'.format(
+                        expression))
+                return n, species[label]
+    if not term or any(c.isspace() for c in term) or match:
+        raise ValueError('Cannot parse the term {!r} in {!r}'.format(
+            term, expression))
+    raise ValueError('Unknown species {!r} in {!r}'.format(term, expression))
+
+
+def _parse_side(text, species, expression):
+    """'2 h + o' -> [h, h, o] (species looked up by label)."""
+    out = []
+    for term in text.split('+'):
+        n, sp = _parse_term(term.strip(), species, expression)
+        out += [sp] * n
+    return out
+
+
+def _sum(species):
+    return species[0] if len(species) == 1 else _Reactants(species)
 
 
 class Reaction:
@@ -91,6 +166,15 @@ class Reaction:
     explicit_ts : bool
         Use only the transition state's own energy, including ts.lateral
         (no interpolation between reactants and products).
+    check_balance : bool
+        Raise a ValueError if the reactants, products and transition state
+        do not contain the same atoms. Empty sites and electrons are not
+        counted, and an adsorbate whose structure contains the atoms of its
+        (first) site species, e.g. a slab, is counted without them.
+
+    Reactions can also be written as strings, Reaction.from_string('co + o
+    <-> o-co -> co2_g', species), or several at once with
+    micki.reactions_from_strings.
 
     Under micki.set_conventions('catmap'), clip defaults to 'coverage' (for
     TST, EQUIL and STICK), alpha to 0.5 (unless explicit_ts), and the
@@ -114,7 +198,7 @@ class Reaction:
 
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
                  dG_act=None, dground=False, reversible=True, clip=DEFAULT,
-                 alpha=DEFAULT, explicit_ts=False):
+                 alpha=DEFAULT, explicit_ts=False, check_balance=True):
         self.conventions = get_conventions()
         catmap = self.conventions == 'catmap'
         if clip is DEFAULT:
@@ -212,9 +296,8 @@ class Reaction:
             # or _Reactants
             else:
                 raise NotImplementedError
-        # FIXME: Add stoichiometry checking to ensure logical reactions.
-        # Caveat: Don't fail on unbalanced adsorption sites, since some
-        # species take up more than one site.
+        if check_balance:
+            self._check_balance()
 
         self.involves_catalyst = False
         for species in self.reactants:
@@ -301,6 +384,57 @@ class Reaction:
                                                       'STICK'):
             raise ValueError("clip='coverage' is only implemented for the "
                              "TST, EQUIL and STICK rate laws")
+
+    @classmethod
+    def from_string(cls, expression, species, **kwargs):
+        """A Reaction from a string such as 'co + o <-> o-co -> co2_g'.
+
+        expression: 'reactants -> products' or, with a transition state,
+        'reactants <-> ts -> products' (CatMap's form; '->' and '<->' are
+        interchangeable and both mean a reversible step, see reversible).
+        Terms are species labels separated by '+', each optionally
+        preceded by an integer coefficient ('2 h', '2*h' or '2h'; a term
+        that is itself a label is taken as the label). Empty-site species
+        may be written or left out (sites are balanced automatically); in
+        the transition-state part they are ignored.
+
+        species: a dict {label: species} (e.g. from read_from_db) or a list
+        of species. Other keyword arguments are passed to Reaction.
+        """
+        if not isinstance(species, Mapping):
+            species = {s.label: s for s in species}
+        states = [_parse_side(text, species, expression)
+                  for text in _ARROW.split(expression)]
+        if len(states) not in (2, 3):
+            raise ValueError("Write 'reactants -> products' or 'reactants "
+                             "<-> ts -> products', not {!r}".format(
+                                 expression))
+        if len(states) == 3:
+            if 'ts' in kwargs:
+                raise ValueError('Transition state given twice for {!r}'
+                                 ''.format(expression))
+            ts = [s for s in states[1] if not _is_vacancy(s)]
+            if not ts:
+                raise ValueError('No transition state in {!r}'.format(
+                    expression))
+            kwargs['ts'] = _sum(ts)
+        return cls(_sum(states[0]), _sum(states[-1]), **kwargs)
+
+    def _check_balance(self):
+        """Raise a ValueError if the reaction does not conserve atoms."""
+        initial = _side_composition(self.reactants)
+        final = _side_composition(self.products)
+        states = 'reactants {}, products {}'.format(_formula(initial),
+                                                    _formula(final))
+        balanced = initial == final
+        if self.ts is not None:
+            ts = _side_composition(self.ts)
+            states += ', transition state {}'.format(_formula(ts))
+            balanced = balanced and ts == initial
+        if not balanced:
+            raise ValueError('{} does not conserve atoms ({}); pass '
+                             'check_balance=False if this is intended'
+                             ''.format(self, states))
 
     def _check_scale_param(self, param):
         if param not in self.scale:
@@ -581,6 +715,34 @@ class Reaction:
             string += self.ts.__repr__() + ' <-> '
         string += self.products.__repr__()
         return string
+
+
+def reactions_from_strings(species, reactions):
+    """Several Reactions from strings, as a dict {name: Reaction} for
+    Model.add_reactions.
+
+    species: {label: species} (e.g. from read_from_db) or a list of
+    species. reactions: {name: expression} or {name: (expression,
+    {keyword arguments for Reaction})}, e.g.
+
+        reactions_from_strings(sp, {
+            'co_ads': ('co_g -> co', {'method': 'STICK'}),
+            'co_ox': 'co + o <-> o-co -> co2_g',
+        })
+
+    See Reaction.from_string for the syntax.
+    """
+    out = OrderedDict()
+    for name, spec in reactions.items():
+        if isinstance(spec, str):
+            expression, kwargs = spec, {}
+        else:
+            expression, kwargs = spec
+        try:
+            out[name] = Reaction.from_string(expression, species, **kwargs)
+        except ValueError as e:
+            raise ValueError('Reaction {}: {}'.format(name, e)) from None
+    return out
 
 
 class Model:

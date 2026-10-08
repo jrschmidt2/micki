@@ -193,24 +193,13 @@ def build(m, catmap_matrix):
                                  np.array([-0.01] + [f * CM for f in freqs]),
                                  ts=True, sites=[sites[site]])
 
-        def species(term):
-            name, n = term
-            s = sites[name[2:]] if name.startswith('*_') else sp[name]
-            return n * s if n > 1 else s
-
-        def side(terms):
-            out = None
-            for t in terms:
-                out = species(t) if out is None else out + species(t)
-            return out
-
+        # CatMap's reaction expressions, read with its species names
+        names = dict(sp)
+        names.update({'*_' + site: vac for site, vac in sites.items()})
         rxns = {}
         for i, (expression, pf) in enumerate(m['reactions']):
-            initial, ts, final = parse_reaction(expression)
             kw = {'method': 'STICK'} if pf == 'non-activated' else {}
-            if ts is not None:
-                kw['ts'] = [sp[n] for n, _ in ts if not n.startswith('*_')][0]
-            rxns['r%d' % i] = Reaction(side(initial), side(final), **kw)
+            rxns['r%d' % i] = Reaction.from_string(expression, names, **kw)
 
         ads = [sp[n] for n in m['adsorbates']]
         eps = {sp[a]: {sp[b]: v for b, v in catmap_matrix[a].items()
