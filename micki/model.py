@@ -27,10 +27,15 @@ def _at_zero_coverage(expr):
     return float(expr)
 
 
-def _is_vacancy(species):
-    """An empty-site species: an adsorbate that occupies no sites."""
-    return (isinstance(species, Adsorbate) and not species.sites
-            and not species.ts)
+def _site_species(species):
+    """The empty-site species among `species` and their sites: the species
+    that some species lists in its sites (as Model treats them), by
+    identity."""
+    sites = {}
+    for sp in species:
+        for site in sp.sites or []:
+            sites[id(site)] = site
+    return sites
 
 
 def _composition(species):
@@ -48,12 +53,12 @@ def _composition(species):
     return counts
 
 
-def _side_composition(side):
-    """Element counts of a reaction side, without empty sites and
-    electrons."""
+def _side_composition(side, sites):
+    """Element counts of a reaction side, without empty sites (`sites`, from
+    _site_species) and electrons."""
     total = Counter()
     for species in side:
-        if not _is_vacancy(species) and not isinstance(species, Electron):
+        if id(species) not in sites and not isinstance(species, Electron):
             total += _composition(species)
     return total
 
@@ -67,20 +72,39 @@ _ARROW = re.compile(r'<->|->')
 _COEFFICIENT = re.compile(r'(\d+)(.*)$', re.S)
 
 
+def _lookup(label, species):
+    """The species called `label`: a key of `species`, or '*' for the only
+    empty-site species among them."""
+    if label in species:
+        return species[label]
+    if label == '*':
+        sites = list(_site_species(species.values()).values())
+        if len(sites) != 1:
+            raise ValueError("'*' needs exactly one empty-site species, "
+                             'found {}'.format(
+                                 ', '.join(sorted(map(str, sites)))
+                                 or 'none'))
+        return sites[0]
+    return None
+
+
 def _parse_term(term, species, expression):
     """'2 h', '2*h', '2h' -> (2, h); a term that is a label is a label (so
-    are CatMap's '*_s' and '2*_s' -> (2, '*_s'))."""
-    if term in species:
-        return 1, species[term]
+    are CatMap's '*_s' and '2*_s' -> (2, '*_s')); '*' and '2*' are the
+    empty site."""
+    sp = _lookup(term, species)
+    if sp is not None:
+        return 1, sp
     match = _COEFFICIENT.match(term)
     if match:
         n, rest = int(match.group(1)), match.group(2).strip()
         for label in (rest, rest[1:].strip() if rest[:1] == '*' else None):
-            if label and label in species:
+            sp = _lookup(label, species) if label else None
+            if sp is not None:
                 if n < 1:
                     raise ValueError('Coefficient 0 in {!r}'.format(
                         expression))
-                return n, species[label]
+                return n, sp
     if not term or any(c.isspace() for c in term) or match:
         raise ValueError('Cannot parse the term {!r} in {!r}'.format(
             term, expression))
@@ -168,9 +192,10 @@ class Reaction:
         (no interpolation between reactants and products).
     check_balance : bool
         Raise a ValueError if the reactants, products and transition state
-        do not contain the same atoms. Empty sites and electrons are not
-        counted, and an adsorbate whose structure contains the atoms of its
-        (first) site species, e.g. a slab, is counted without them.
+        do not contain the same atoms. Empty sites (species that a species
+        of the reaction lists in its sites) and electrons are not counted,
+        and an adsorbate whose structure contains the atoms of its (first)
+        site species, e.g. a slab, is counted without them.
 
     Reactions can also be written as strings, Reaction.from_string('co + o
     <-> o-co -> co2_g', species), or several at once with
@@ -395,8 +420,11 @@ class Reaction:
         Terms are species labels separated by '+', each optionally
         preceded by an integer coefficient ('2 h', '2*h' or '2h'; a term
         that is itself a label is taken as the label). Empty-site species
-        may be written or left out (sites are balanced automatically); in
-        the transition-state part they are ignored.
+        (species that others list in their sites) may be written or left
+        out, since sites are balanced automatically; '*' stands for the
+        empty site if there is only one kind among `species` (an explicit
+        '*' key takes precedence). In the transition-state part empty sites
+        are ignored.
 
         species: a dict {label: species} (e.g. from read_from_db) or a list
         of species. Other keyword arguments are passed to Reaction.
@@ -413,7 +441,8 @@ class Reaction:
             if 'ts' in kwargs:
                 raise ValueError('Transition state given twice for {!r}'
                                  ''.format(expression))
-            ts = [s for s in states[1] if not _is_vacancy(s)]
+            sites = _site_species(sum(states, []))
+            ts = [s for s in states[1] if id(s) not in sites]
             if not ts:
                 raise ValueError('No transition state in {!r}'.format(
                     expression))
@@ -422,13 +451,15 @@ class Reaction:
 
     def _check_balance(self):
         """Raise a ValueError if the reaction does not conserve atoms."""
-        initial = _side_composition(self.reactants)
-        final = _side_composition(self.products)
+        sites = _site_species(list(self.reactants) + list(self.products)
+                              + list(self.ts or []))
+        initial = _side_composition(self.reactants, sites)
+        final = _side_composition(self.products, sites)
         states = 'reactants {}, products {}'.format(_formula(initial),
                                                     _formula(final))
         balanced = initial == final
         if self.ts is not None:
-            ts = _side_composition(self.ts)
+            ts = _side_composition(self.ts, sites)
             states += ', transition state {}'.format(_formula(ts))
             balanced = balanced and ts == initial
         if not balanced:

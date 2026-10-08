@@ -144,9 +144,10 @@ after reading.
 
 ### Sites and multidentate species
 
-Empty sites are species too: an `Adsorbate` without sites (e.g. the clean slab
-with energy 0 relative to the reference). Every adsorbate lists the sites it
-occupies, once per site:
+Empty sites are species too: an ordinary `Adsorbate` without sites, e.g. the
+clean slab with energy 0 relative to the reference. Nothing marks it as a site,
+and its label is arbitrary: it becomes an empty site because other adsorbates
+list it in their `sites`, once per site they occupy:
 
 ```python
 co = Adsorbate(atoms_co, 'co', freqs_co, sites=[slab])            # monodentate
@@ -181,8 +182,13 @@ Reaction.from_string('h2_g -> 2 h', sp, method='STICK')
     `reversible=False`.
   - Terms are labels joined by `+`, each with an optional integer coefficient
     (`2 h`, `2*h` or `2h`).
+  - `*` (and `2*`) stands for the empty site when the species include only one
+    site type, whatever its label (`'co_g + * -> co'`). With several site
+    types, write their labels.
 - **Species lookup:** `sp` is a dict `{label: species}`, as `read_from_db`
-  returns, or a list of species. An unknown label raises an error.
+  returns, or a list of species. An unknown label raises an error. A dict can
+  also map other names, e.g. CatMap's `'*_s'`, to species; a term that is a
+  key always wins.
 - **Other options:** keyword arguments (`method`, `clip`, …) go to `Reaction`.
 - **A whole mechanism at once:** `reactions_from_strings(sp, {name: expression
   or (expression, {options})})` builds the dict for `Model.add_reactions`, as in
@@ -198,12 +204,14 @@ Reaction(sp['h2_g'], 2 * sp['h'], method='STICK')
 
 **Empty sites:** missing ones are added automatically to balance the sites on
 both sides. In the example, `co_g -> co` becomes `co_g + slab -> co`. In a
-string, empty sites may be written out (as CatMap does) or left out. In the
-transition-state part they are ignored.
+string, empty sites may be written out (as `*`, by label, or as CatMap does)
+or left out. In the transition-state part they are ignored.
 
 **Atom balance:** every reaction checks that its reactants, products and
 transition state contain the same atoms, and raises an error otherwise.
-- Empty sites and electrons are not counted.
+- Empty sites (species that a species of the reaction lists in its `sites`)
+  and electrons are not counted. An adsorbate created without `sites` by
+  mistake is therefore counted, not taken for an empty site.
 - An adsorbate whose structure includes its site's atoms (e.g. a DFT slab) is
   counted without them.
 - `check_balance=False` turns the check off for deliberately unbalanced steps,

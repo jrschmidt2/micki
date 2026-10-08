@@ -68,7 +68,7 @@ Adsorbate(atoms, label, freqs=None, ts=None, spin=0., sites=None,
 | `freqs` | from `atoms` (row or VASP) | Frequencies (eV), all used; for a transition state the first (imaginary) one is dropped. |
 | `ts` | `None` (false) | Transition state. |
 | `spin` | 0 | Total spin S. |
-| `sites` | `[]` | Site (vacancy) species occupied, once per site: `[slab]`, `[slab, slab]`. Empty sites themselves have none. |
+| `sites` | `[]` | Site (vacancy) species occupied, once per site: `[slab]`, `[slab, slab]`. A species listed here by others is an empty site; empty sites have no sites themselves. |
 | `lattice` | `None` | Set by `Model.lattice`; gives multi-site species configurational entropy. |
 | `eref` | `None` | `EnergyReference`. |
 | `dE` | 0 | Energy shift (eV). |
@@ -120,13 +120,15 @@ Reaction.from_string(expression, species, **kwargs)
 | `clip` | `None` *(conventions: `'coverage'` for TST, EQUIL, STICK)* | Negative barriers: `None` raises at zero coverage; `'zero_coverage'` (TST) clips once at zero coverage; `'coverage'` (TST, EQUIL, STICK, `dG_act`) uses Max(ΔG‡, ΔG, 0) at the current coverages. |
 | `alpha` | `None` = computed *(conventions: 0.5)* | Weight of the products' coverage terms in the transition-state energy; computed BEP-style if `None`. |
 | `explicit_ts` | `False` | Transition-state energy from the TS species only (with `ts.lateral`). |
-| `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms (empty sites and electrons not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
+| `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms (empty sites, i.e. species listed in a reaction species' `sites`, and electrons not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
 
 `Reaction.from_string(expression, species, **kwargs)` builds a reaction from
 `'reactants -> products'` or `'reactants <-> ts -> products'`. `->` and `<->`
 are interchangeable. Terms are labels joined by `+`, with optional integer
-coefficients (`2 h`, `2*h`, `2h`). Empty sites are optional, and ignored in the
-transition-state part. `species` is a dict `{label: species}` or a list of
+coefficients (`2 h`, `2*h`, `2h`). `*` is the empty site when the species
+include only one site type. A term that is a key of `species` is always taken
+as that key. Empty sites are optional, and ignored in the transition-state
+part. `species` is a dict `{label or other name: species}` or a list of
 species. The keyword arguments are those of `Reaction`.
 
 ```python

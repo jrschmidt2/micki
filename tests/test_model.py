@@ -538,6 +538,11 @@ class ConventionsTest(unittest.TestCase):
                 pass
 
 
+def _with_energy(atoms, energy=0.):
+    atoms.calc = SinglePointCalculator(atoms, energy=energy)
+    return atoms
+
+
 class ReactionStringTest(unittest.TestCase):
     """Reaction.from_string, reactions_from_strings, atom balance."""
 
@@ -602,6 +607,47 @@ class ReactionStringTest(unittest.TestCase):
                              sorted(s.label for s in old.products))
             np.testing.assert_allclose(self._constants(new),
                                        self._constants(old), rtol=1e-12)
+
+    def test_star(self):
+        # '*' is the only empty-site species, whatever its label
+        sp = self.sp
+        for expression, old in [
+                ('co_g + * -> co', Reaction(sp['co_g'], sp['co'])),
+                ('h2_g + 2* -> 2 h', Reaction(sp['h2_g'], 2 * sp['h'])),
+                ('cooh + * <-> oco-h + * -> co2_g + h',
+                 Reaction(sp['cooh'] + sp['slab'], sp['co2_g'] + sp['h'],
+                          ts=sp['oco-h']))]:
+            new = Reaction.from_string(expression, sp)
+            self.assertEqual(sorted(s.label for s in new.reactants),
+                             sorted(s.label for s in old.reactants))
+            self.assertEqual(sorted(s.label for s in new.products),
+                             sorted(s.label for s in old.products))
+            if old.ts is not None:
+                self.assertEqual([s.label for s in new.ts], ['oco-h'])
+        # ambiguous with two site types
+        from micki import Adsorbate
+        top = Adsorbate(_with_energy(Atoms()), 'top', [])
+        hollow = Adsorbate(_with_energy(Atoms()), 'hollow', [])
+        h = Adsorbate(_with_energy(Atoms('H')), 'h', [0.1, 0.1, 0.1],
+                      sites=[hollow])
+        co = Adsorbate(_with_energy(Atoms('CO')), 'co', [0.2, 0.1, 0.1],
+                       sites=[top])
+        with self.assertRaisesRegex(ValueError, 'hollow, top'):
+            Reaction.from_string('h2_g + 2* -> 2 h',
+                                 [sp['h2_g'], top, hollow, h, co])
+        Reaction.from_string('h2_g + 2 hollow -> 2 h',
+                             [sp['h2_g'], top, hollow, h, co])
+
+    def test_empty_sites_by_reference(self):
+        # an adsorbate created without sites is not mistaken for an empty
+        # site (only species listed in other species' sites are)
+        from micki import Adsorbate
+        co_g = self.sp['co_g']
+        Reaction(co_g, Adsorbate(_with_energy(Atoms('CO')), 'bare_co',
+                                 [0.2, 0.1, 0.1]))
+        with self.assertRaisesRegex(ValueError, 'conserve atoms'):
+            Reaction(co_g, Adsorbate(_with_energy(Atoms('O')), 'bare_o',
+                                     [0.1]))
 
     def test_errors(self):
         sp = self.sp
