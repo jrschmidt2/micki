@@ -10,11 +10,21 @@ fit together. The theory is derived in Hermes et al., J. Chem. Phys. 151,
 
 ## A complete example
 
-CO oxidation by dissociatively adsorbed O₂, at fixed gas pressures, with
-made-up energies (eV, relative to the gases and the clean surface) and
-frequencies (eV). The species are built directly from ASE `Atoms` objects with
-attached energies; in practice they usually come from DFT output or an ASE
-database (see below).
+CO oxidation by dissociatively adsorbed O₂, at fixed gas pressures.
+
+The energies and frequencies here are **made up**, so that the example is
+self-contained and runs without any DFT files. They are typed in as numbers
+attached to bare ASE `Atoms` objects. In a real model they come from
+calculations, either output files or an ASE database (see
+[Reading DFT output and databases](#reading-dft-output-and-databases)); the
+commented-out lines in the example show how.
+
+Energies are relative to a chosen zero, much like formation energies: CO(g),
+O₂(g) and the clean surface are set to 0, and every other energy is measured
+from them. For example, `co` at −1.30 eV means CO binds by 1.30 eV relative to
+CO(g) and an empty site. Only energy differences enter the kinetics, and micki
+adds zero-point energy, thermal energy and entropy from the frequencies (and,
+for gases, translation and rotation).
 
 ```python
 from ase import Atoms
@@ -31,28 +41,49 @@ def with_energy(atoms, energy):
     return atoms
 
 
-# Gases: all 3N modes; the lowest 6 (5 for linear molecules) are dropped.
-co_g = Gas(with_energy(molecule('CO'), 0.0), 'co_g',
+# Made-up electronic energies (eV) relative to CO(g), O2(g) and the clean
+# surface, which define the zero of energy; frequencies in eV.
+
+# Gases: all 3N modes; the lowest 6 (5 for linear molecules) are the
+# translations and rotations and are dropped, so they can be 0 here.
+co_g = Gas(with_energy(molecule('CO'), 0.0), 'co_g',     # reference: 0
            freqs=[0, 0, 0, 0, 0, 0.266])
-o_g = Gas(with_energy(molecule('O2'), 0.0), 'o2_g',
+o_g = Gas(with_energy(molecule('O2'), 0.0), 'o2_g',      # reference: 0
           freqs=[0, 0, 0, 0, 0, 0.196], symm=2, spin=1)
-co2_g = Gas(with_energy(molecule('CO2'), -3.0), 'co2_g',
-            freqs=[0, 0, 0, 0, 0, 0.083, 0.083, 0.165, 0.291], symm=2)
-# The empty site, and adsorbates occupying it
+co2_g = Gas(with_energy(molecule('CO2'), -3.0), 'co2_g',  # CO + 1/2 O2 -> CO2:
+            freqs=[0, 0, 0, 0, 0, 0.083, 0.083, 0.165, 0.291],  # -3.0 eV
+            symm=2)
+
+# The empty site (reference: 0), and adsorbates occupying it
 slab = Adsorbate(with_energy(Atoms(), 0.0), 'slab', freqs=[])
-co = Adsorbate(with_energy(Atoms('CO'), -1.30), 'co',
+co = Adsorbate(with_energy(Atoms('CO'), -1.30), 'co',    # CO binds by 1.30 eV
                freqs=[0.254, 0.052, 0.045, 0.045, 0.008, 0.008],
                sites=[slab])
-o = Adsorbate(with_energy(Atoms('O'), -1.20), 'o',
+o = Adsorbate(with_energy(Atoms('O'), -1.20), 'o',       # relative to 1/2 O2
               freqs=[0.060, 0.051, 0.051], sites=[slab])
+
 # Transition states: the first (imaginary) mode is dropped
-o_o = Adsorbate(with_energy(Atoms('O2'), -0.70), 'o-o',
+o_o = Adsorbate(with_energy(Atoms('O2'), -0.70), 'o-o',  # O2 dissociation
                 freqs=[-0.05, 0.075, 0.057, 0.051, 0.037, 0.032],
                 ts=True, sites=[slab, slab])
-o_co = Adsorbate(with_energy(Atoms('CO2'), -1.70), 'o-co',
+o_co = Adsorbate(with_energy(Atoms('CO2'), -1.70), 'o-co',  # CO + O
                  freqs=[-0.04, 0.22, 0.065, 0.053, 0.045, 0.037, 0.032,
                         0.015, 0.011],
                  ts=True, sites=[slab, slab])
+
+# In a real model, a species comes from a calculation instead. For example,
+# from a VASP frequency calculation (micki reads the structure and energy and
+# diagonalizes the Hessian for the frequencies), with an energy reference
+# built from the reference structures:
+#
+#   from micki import EnergyReference
+#   eref = EnergyReference(['slab/OUTCAR', 'co_g/OUTCAR', 'o2_g/OUTCAR'])
+#   co = Adsorbate('co/OUTCAR', 'co', sites=[slab], eref=eref)
+#
+# or from any ASE Atoms object with a calculator, plus its frequencies in eV
+# (e.g. from ase.vibrations):
+#
+#   co = Adsorbate(atoms, 'co', freqs=frequencies, sites=[slab], eref=eref)
 
 species = [co_g, o_g, co2_g, slab, co, o, o_o, o_co]
 reactions = reactions_from_strings(species, {
@@ -79,6 +110,15 @@ coverages: CO 0.117, O 0.882, free 0.001
 CO2 formation rate: 1.21e+04 per site per s
 found by: integrate+newton
 ```
+
+What drives the result are free-energy differences at 500 K, which micki
+computes from these energies and frequencies (gases at 1 M):
+- **CO adsorption:** ΔG = −0.64 eV.
+- **O₂ dissociation:** a barrier of 0.07 eV.
+- **CO + O → CO₂:** a barrier of 0.79 eV.
+
+The surface ends up mostly covered by O. CO adsorption onto the few free
+sites limits the rate (see [Sensitivity analysis](analysis.md)).
 
 The sections below go through each step.
 
