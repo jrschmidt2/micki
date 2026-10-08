@@ -683,6 +683,87 @@ class ReactionStringTest(unittest.TestCase):
             micki.reactions_from_strings(sp, {'bad': 'co -> nothing'})
 
 
+class SitesTest(unittest.TestCase):
+    """Adsorbates must occupy sites unless they are sitefree."""
+
+    T = 548.
+
+    @classmethod
+    def setUpClass(cls):
+        warnings.simplefilter('ignore')
+
+    def setUp(self):
+        self.sp = wgs.build_species()
+
+    def _model(self, rxns, lattice=False):
+        model = Model(self.T, wgs.ASITE)
+        if lattice:
+            model.lattice = {self.sp['slab']: {self.sp['slab']: 6}}
+        model.add_reactions(rxns)
+        model.set_fixed([g for g in ('co_g', 'co2_g') if g in model.species])
+        return model
+
+    def _initial(self, model):
+        U0 = {'co_g': bar_to_molar(0.1, self.T),
+              'co2_g': bar_to_molar(0.01, self.T)}
+        return {k: v for k, v in U0.items() if k in model.species}
+
+    def test_adsorbate_without_sites(self):
+        from micki import Adsorbate
+        bare = Adsorbate(_with_energy(Atoms('CO'), -1.), 'co_bare',
+                         self.sp['co'].freqs)
+        model = self._model({'ads': Reaction(self.sp['co_g'], bare)})
+        with self.assertRaisesRegex(ValueError, 'co_bare occupies no sites'):
+            model.set_initial_conditions(self._initial(model))
+
+    def test_sitefree(self):
+        # a site-free adsorbate is not limited by sites: theta = keq * c
+        from micki import Adsorbate
+        co = self.sp['co']
+        free = Adsorbate(_with_energy(Atoms('CO'), -1.), 'co_free', co.freqs,
+                         sitefree=True)
+        rxn = Reaction(self.sp['co_g'], free)
+        model = self._model({'ads': rxn})
+        U0 = self._initial(model)
+        model.set_initial_conditions(U0)
+        _, U, _ = model.find_steady_state()
+        self.assertAlmostEqual(U['co_free'] / (float(rxn.keq) * U0['co_g']),
+                               1., places=8)
+        with self.assertRaises(ValueError):
+            Adsorbate(co.atoms, 'x', co.freqs, sites=[self.sp['slab']],
+                      sitefree=True)
+        from ase.db import connect
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(os.path.join(tmp, 'species.json'))
+            free.save_to_db(db)
+            self.assertTrue(read_from_db(db)['co_free'].sitefree)
+
+    def test_transition_state_without_sites(self):
+        # with a lattice, a transition state without sites would silently get
+        # no configurational entropy (these structures include the slab, so
+        # without a site the atom balance check would object first)
+        from micki import Adsorbate
+        sp = self.sp
+        for species in sp.values():  # interactions refer to other species
+            species.lateral = 0.
+        ts = sp['o-co']
+        bare_ts = Adsorbate(ts.atoms, 'o-co_bare', ts.freqs, ts=True,
+                            eref=ts.eref)
+        free_ts = Adsorbate(ts.atoms, 'o-co_free', ts.freqs, ts=True,
+                            eref=ts.eref, sitefree=True)
+        for t, lattice, ok in [(bare_ts, True, False), (bare_ts, False, True),
+                               (free_ts, True, True), (ts, True, True)]:
+            model = self._model(
+                {'r': Reaction(sp['co'] + sp['o'], sp['co2_g'], ts=t,
+                               check_balance=False)},
+                lattice=lattice)
+            if ok:
+                model.set_initial_conditions(self._initial(model))
+            else:
+                with self.assertRaisesRegex(ValueError, 'Transition state'):
+                    model.set_initial_conditions(self._initial(model))
+
+
 class LatticeTest(unittest.TestCase):
 
     def test_update_site_names(self):

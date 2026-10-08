@@ -127,7 +127,10 @@ def _sum(species):
 class Reaction:
     """Elementary step reactants <-> products.
 
-    Sides are species or sums of species (e.g. 2 * sp['h'] + sp['o2']);
+    Usually written as a string, Reaction.from_string('co + o <-> o-co ->
+    co2_g', species), or several at once with micki.reactions_from_strings.
+    The constructor takes the sides as species objects: species or sums of
+    species (e.g. 2 * sp['h'] + sp['o2']);
     empty sites needed to balance the sites of both sides are added
     automatically (the vacancy species of the adsorbates' sites).
 
@@ -196,10 +199,6 @@ class Reaction:
         of the reaction lists in its sites) and electrons are not counted,
         and an adsorbate whose structure contains the atoms of its (first)
         site species, e.g. a slab, is counted without them.
-
-    Reactions can also be written as strings, Reaction.from_string('co + o
-    <-> o-co -> co2_g', species), or several at once with
-    micki.reactions_from_strings.
 
     Under micki.set_conventions('catmap'), clip defaults to 'coverage' (for
     TST, EQUIL and STICK), alpha to 0.5 (unless explicit_ts), and the
@@ -991,6 +990,29 @@ class Model:
 
     lattice = property(get_lattice, set_lattice, doc='Model lattice')
 
+    def _check_sites(self):
+        """Raise ValueError for adsorbates that occupy no sites although
+        they are not empty sites, and (with a lattice) for transition states
+        without sites, unless they are marked sitefree=True."""
+        hint = ('give its sites (sites=[...]) or, if it deliberately '
+                'occupies none, sitefree=True')
+        for species in self._species:
+            if isinstance(species, Adsorbate) and not species.ts \
+                    and not species.sites and not species.sitefree:
+                raise ValueError('Adsorbate {} occupies no sites and is not '
+                                 'a site of any species; {}'.format(
+                                     species, hint))
+        if self.lattice is None:
+            return
+        for reaction in self._reactions:
+            for ts in reaction.ts or []:
+                if isinstance(ts, Adsorbate) and not ts.sites \
+                        and not ts.sitefree:
+                    raise ValueError(
+                        'Transition state {} occupies no sites, so the '
+                        'lattice gives it no configurational entropy; '
+                        '{}'.format(ts, hint))
+
     def set_initial_conditions(self, U0):
         """Set the initial state and build the model's equations and solver.
 
@@ -1000,10 +1022,14 @@ class Model:
         are computed from the site balances (values given for vacancies
         are ignored). Raises ValueError if a rate expression refers to a
         species that is not in the model (e.g. through lateral
-        interactions) or if the sites are over-full.
+        interactions), if the sites are over-full, or if an adsorbate (or,
+        with a lattice, a transition state) occupies no sites without being
+        marked sitefree.
         """
         if self.initialized:
             self.finalize()
+
+        self._check_sites()
 
         # Reorder species such that Liquid -> Gas -> Adsorbate -> Vacancy
         # Steady-state species go to the end.

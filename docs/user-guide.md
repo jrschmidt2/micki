@@ -1,8 +1,9 @@
 # User guide
 
 A micki model is built in four steps: **species** (energies and vibrational
-frequencies), **reactions** (elementary steps between species), a **model**
-(reactions plus reactor settings), and a **solver** call. The
+frequencies), **reactions** (elementary steps between species, usually written
+as strings such as `'co + o <-> o-co -> co2_g'`), a **model** (reactions plus
+reactor settings), and a **solver** call. The
 [reference](reference.md) lists every parameter; this guide explains how they
 fit together. The theory is derived in Hermes et al., J. Chem. Phys. 151,
 014112 (2019) (see the [overview](index.md)).
@@ -154,6 +155,15 @@ co = Adsorbate(atoms_co, 'co', freqs_co, sites=[slab])            # monodentate
 ts = Adsorbate(atoms_ts, 'o-co', freqs_ts, ts=True, sites=[slab, slab])
 ```
 
+An adsorbate that occupies no sites and is not itself an empty site is almost
+always a mistake (its coverage would not be limited by any site balance), so
+`Model.set_initial_conditions` raises an error for it. With a lattice, it
+does the same for a transition state without sites, which would get no
+configurational entropy. For a species that deliberately occupies no sites,
+e.g. a mobile precursor or a dilute-limit model, pass `sitefree=True`.
+(Gas-phase reactants, as in Eley–Rideal steps, are `Gas` species and need no
+sites.)
+
 The coverages of all species on a site type plus its empty sites add up to 1.
 With several site types, the lattice sets their ratio. Several site types work
 as you would expect: give each its own vacancy species (e.g. H on `hollow`,
@@ -169,7 +179,7 @@ the computed α and clipped barriers.
 
 ## Reactions
 
-Reactions can be written as strings of species labels:
+The recommended way to write reactions is as strings of species labels:
 
 ```python
 Reaction.from_string('co + o <-> o-co -> co2_g', sp)
@@ -194,7 +204,9 @@ Reaction.from_string('h2_g -> 2 h', sp, method='STICK')
   or (expression, {options})})` builds the dict for `Model.add_reactions`, as in
   the example above.
 
-Equivalently, build the sides from species objects with `+` and `*`:
+Underneath, `Reaction` takes the two sides as species objects combined with
+`+` and `*`. This form is equivalent, and convenient when reactions are
+generated in code:
 
 ```python
 Reaction(reactants, products, ts=None, method=None, ...)

@@ -22,7 +22,8 @@ def get_data(row, param):
 def row_to_thermo(row):
     """A species (Adsorbate, Gas or Liquid) from an ASE database row written
     by save_to_db: its parameters are in row.data ('thermo', 'freqs',
-    'sites', 'ts', 'symm', 'spin', 'dE', 'rhoref', 'pref', 'D', 'S'); sites
+    'sites', 'sitefree', 'ts', 'symm', 'spin', 'dE', 'rhoref', 'pref', 'D',
+    'S'); sites
     are still labels (read_from_db resolves them)."""
     name = row.name
     freqs = get_data(row, 'freqs')
@@ -36,6 +37,7 @@ def row_to_thermo(row):
     D = get_data(row, 'D')
     S = get_data(row, 'S')
     pref = row.data.get('pref')  # absent in databases written before 2.1
+    sitefree = row.data.get('sitefree', False)  # absent before 2.2
     if pref is not None or rhoref == 1.:
         # unused with pref; else the default, which depends on
         # micki.conventions
@@ -43,7 +45,8 @@ def row_to_thermo(row):
 
     if thermo == 'Adsorbate':
         return Adsorbate(row.toatoms(), name, freqs,
-                         ts=ts, sites=sites, dE=dE, symm=symm)
+                         ts=ts, sites=sites, dE=dE, symm=symm,
+                         sitefree=sitefree)
     elif thermo == 'Gas':
         return Gas(row.toatoms(), name, freqs,
                    symm=symm, spin=spin, rhoref=rhoref, dE=dE, pref=pref)

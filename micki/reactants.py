@@ -80,6 +80,7 @@ class _Thermo:
         self.lateral = 0.
         self.dE = 0.
         self.sites = []
+        self.sitefree = False
         self.lattice = None
         self.D = None
         self.Sliq = None
@@ -249,6 +250,7 @@ class _Thermo:
                 'rhoref': 1. if getattr(self, 'pref', None) else self.rho0,
                 'pref': getattr(self, 'pref', None),
                 'sites': [site.label for site in self.sites],
+                'sitefree': self.sitefree,
                 'dE': self.dE}
 
         if isinstance(self, Adsorbate):
@@ -591,11 +593,20 @@ class Adsorbate(_Thermo):
         symmetric bidentate species (Hermes et al. 2019, eqs. 6-7). A symm
         larger than the orientations counted (e.g. any symm > 1 for a
         single-site species) only lowers the partition function and warns.
+    sitefree : bool
+        The species deliberately occupies no sites (e.g. a mobile
+        precursor or a dilute-limit model): its coverage is not limited by
+        a site balance. Otherwise a Model raises an error for an adsorbate
+        without sites that is not itself an empty site, and, with a
+        lattice, for a transition state without sites.
+
+    Empty sites are Adsorbates without sites that other species list in
+    their sites; nothing else marks them.
     """
 
     def __init__(self, atoms, label, freqs=None, ts=None,
                  spin=0., sites=None, lattice=None, eref=None, dE=0.,
-                 symm=1):
+                 symm=1, sitefree=False):
         _Thermo.__init__(self)
         self.atoms = atoms
         self.freqs = freqs
@@ -607,6 +618,9 @@ class Adsorbate(_Thermo):
         self.eref = eref
         self.dE = dE
         self.symm = symm
+        if sitefree and self.sites:
+            raise ValueError('{} has sites and sitefree=True'.format(label))
+        self.sitefree = sitefree
         if not np.all(self.freqs[1 if ts else 0:] > 0):
             raise ValueError("Imaginary frequencies found for {}!"
                              "".format(label))
@@ -648,7 +662,7 @@ class Adsorbate(_Thermo):
             return self.__class__(self.atoms, label, self.freqs,
                                   self.ts, self.spin, self.sites,
                                   self.lattice, self.eref, self.dE,
-                                  self.symm)
+                                  self.symm, self.sitefree)
 
 
 class _Reactants:

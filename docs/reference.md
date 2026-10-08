@@ -73,6 +73,7 @@ Adsorbate(atoms, label, freqs=None, ts=None, spin=0., sites=None,
 | `eref` | `None` | `EnergyReference`. |
 | `dE` | 0 | Energy shift (eV). |
 | `symm` | 1 | Symmetry number dividing the orientations counted by the lattice (2 for end-to-end symmetric multidentate species). Warns if larger than the number counted. |
+| `sitefree` | `False` | The species deliberately occupies no sites (e.g. a mobile precursor). Otherwise a model raises an error for an adsorbate without sites that is not an empty site, and, with a lattice, for a transition state without sites. |
 
 ### Electron
 
@@ -101,11 +102,35 @@ Electron(E, self_repulsion, label)
 
 ## Reaction
 
+Reactions are usually written as strings (recommended):
+
+```python
+Reaction.from_string(expression, species, **kwargs)
+reactions_from_strings(species, reactions)
+```
+
+- **`expression`:** `'reactants -> products'` or `'reactants <-> ts ->
+  products'`.
+  - `->` and `<->` are interchangeable; steps are reversible unless
+    `reversible=False`.
+  - Terms are labels joined by `+`, with optional integer coefficients (`2 h`,
+    `2*h`, `2h`).
+  - `*` is the empty site when the species include only one site type.
+  - A term that is a key of `species` is always taken as that key.
+  - Empty sites are optional, and ignored in the transition-state part.
+- **`species`:** a dict `{label or other name: species}` (e.g. from
+  `read_from_db`) or a list of species.
+- **Keyword arguments:** those of the constructor below.
+- **`reactions_from_strings`:** `reactions` maps names to an expression or to
+  `(expression, {keyword arguments})`. Returns `{name: Reaction}` for
+  `Model.add_reactions`; errors name the reaction.
+
+The constructor takes the sides as species objects:
+
 ```python
 Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
          dground=False, reversible=True, clip=..., alpha=...,
          explicit_ts=False, check_balance=True)
-Reaction.from_string(expression, species, **kwargs)
 ```
 
 | Parameter | Default | Meaning |
@@ -121,23 +146,6 @@ Reaction.from_string(expression, species, **kwargs)
 | `alpha` | `None` = computed *(conventions: 0.5)* | Weight of the products' coverage terms in the transition-state energy; computed BEP-style if `None`. |
 | `explicit_ts` | `False` | Transition-state energy from the TS species only (with `ts.lateral`). |
 | `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms (empty sites, i.e. species listed in a reaction species' `sites`, and electrons not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
-
-`Reaction.from_string(expression, species, **kwargs)` builds a reaction from
-`'reactants -> products'` or `'reactants <-> ts -> products'`. `->` and `<->`
-are interchangeable. Terms are labels joined by `+`, with optional integer
-coefficients (`2 h`, `2*h`, `2h`). `*` is the empty site when the species
-include only one site type. A term that is a key of `species` is always taken
-as that key. Empty sites are optional, and ignored in the transition-state
-part. `species` is a dict `{label or other name: species}` or a list of
-species. The keyword arguments are those of `Reaction`.
-
-```python
-reactions_from_strings(species, reactions)
-```
-
-Returns `{name: Reaction}` for `Model.add_reactions`. `reactions` maps names to
-an expression or to `(expression, {keyword arguments})`. Errors name the
-reaction.
 
 Under the CatMap conventions, transition states also ignore the `dE` of the
 reactants and products (`reaction.ts_follows_dE = False`). An explicit
@@ -179,7 +187,7 @@ initialized model.
 | `add_reactions({name: Reaction})` | Add reactions and their species. Mixed conventions raise `ValueError`. |
 | `set_fixed(labels)` | Keep these species (label or list) at their initial values. |
 | `set_solvent(label)` | Make a `Liquid` the solvent (fixed). |
-| `set_initial_conditions(U0)` | `{label: value}`: fluids in M, adsorbates as coverages; others 0, empty sites from the site balance. Builds the equations and the solver; raises `ValueError` for unknown species (also in lateral interactions) or over-full sites. |
+| `set_initial_conditions(U0)` | `{label: value}`: fluids in M, adsorbates as coverages; others 0, empty sites from the site balance. Builds the equations and the solver; raises `ValueError` for unknown species (also in lateral interactions), over-full sites, or adsorbates (with a lattice also transition states) that occupy no sites without `sitefree=True`. |
 | `find_steady_state(dt=60, maxiter=2000, epsilon=1e-8, method='hybrid')` | Steady state; returns `(t, U, r)`. `'hybrid'`: Newton, else integrate (steps of `dt` s, at most `maxiter`, until max \|dy/dt\| < `epsilon`) and polish with Newton. `'integrate'`: integration only. `t` is `inf` after Newton alone. |
 | `solve(t, ncp)` | Integrate to `t` (s) with `ncp` output points; returns `(U_list, r_list)`, times in `model.t`. |
 | `copy(initialize=True)` | New model with the same settings and (shared) reactions. |
