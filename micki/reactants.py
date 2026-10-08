@@ -13,6 +13,9 @@ from ase.db.core import Database
 from ase.db.row import AtomsRow
 from ase.units import mol, _hplanck, m, kg, _k, kB
 
+from ase.data import atomic_masses, atomic_numbers
+
+from micki.conventions import get_conventions, conventions
 from micki.masses import masses
 from micki.io import parse_vasp_out
 from micki.utils import calculate_avg_vdw_radius, bar_to_molar
@@ -40,6 +43,8 @@ class _Thermo:
                       'H': 1.0}
         self.scale_old = copy.deepcopy(self.scale)
 
+        # conventions in effect when the species was built (micki.conventions)
+        self.conventions = get_conventions()
         self.atoms = None
         self.metal = None
         self.eref = None
@@ -73,7 +78,12 @@ class _Thermo:
             self.freqs = f
         else:
             raise ValueError("Unrecognized atoms object!")
-        self.mass = [masses[atom.symbol] for atom in self.atoms]
+        if self.conventions == 'catmap':
+            # standard atomic weights, as CatMap (via ASE) uses
+            self.mass = [atomic_masses[atomic_numbers[atom.symbol]]
+                         for atom in self.atoms]
+        else:
+            self.mass = [masses[atom.symbol] for atom in self.atoms]
         self.atoms.set_masses(self.mass)
         self.update_potential_energy()
 
@@ -318,7 +328,7 @@ class _Thermo:
 class _Fluid(_Thermo):
     """Master object for both liquids and gasses"""
     def __init__(self, atoms, label, freqs=None, symm=1, spin=0.,
-                 eref=None, rhoref=1., dE=0., pref=None):
+                 eref=None, rhoref=None, dE=0., pref=None):
         _Thermo.__init__(self)
         self.atoms = atoms
         self.freqs = freqs
@@ -328,9 +338,12 @@ class _Fluid(_Thermo):
         self.eref = eref
         self.linear = self._is_linear()
         self.ncut = 6 - self.linear + self.ts
-        if pref is not None and rhoref != 1.:
+        if pref is not None and rhoref is not None:
             raise ValueError('Give either rhoref or pref, not both!')
-        self.rho0 = rhoref
+        if pref is None and rhoref is None and isinstance(self, Gas) \
+                and self.conventions == 'catmap':
+            pref = 1.
+        self.rho0 = 1. if rhoref is None else rhoref
         # reference pressure in bar; if given, the reference concentration
         # rho0 = pref / RT (in M) follows the temperature
         self.pref = pref
@@ -347,9 +360,11 @@ class _Fluid(_Thermo):
         label = self.label
         if newlabel is not None:
             label = newlabel
-        return self.__class__(self.atoms, label, self.freqs,
-                              self.symm, self.spin, self.eref,
-                              self.rho0, self.dE, self.pref)
+        with conventions(self.conventions):
+            return self.__class__(self.atoms, label, self.freqs,
+                                  self.symm, self.spin, self.eref,
+                                  None if self.pref else self.rho0,
+                                  self.dE, self.pref)
 
     def _calc_q(self, T):
         if self.pref is not None:
@@ -395,8 +410,9 @@ class Electron(_Thermo):
         label = self.label
         if newlabel is not None:
             label = newlabel
-        return self.__class__(self.potential_energy, self.self_repulsion,
-                              label)
+        with conventions(self.conventions):
+            return self.__class__(self.potential_energy, self.self_repulsion,
+                                  label)
 
     def _calc_q(self, T):
         self._calc_qelec(T)
@@ -411,7 +427,8 @@ class Electron(_Thermo):
 class Gas(_Fluid):
     """Ideal gas. The reference state of its free energy is the
     concentration rhoref (in M, default 1 M) or, if pref is given, the
-    pressure pref (in bar; e.g. pref=1 for CatMap's convention). Rates do
+    pressure pref (in bar; e.g. pref=1 for CatMap's convention, the
+    default under micki.set_conventions('catmap')). Rates do
     not depend on the reference state, but reported free energies (and
     barriers clipped with Reaction(..., clip=...)) do."""
 
@@ -428,9 +445,10 @@ class Liquid(_Fluid):
         label = self.label
         if newlabel is not None:
             label = newlabel
-        return self.__class__(self.atoms, label, self.freqs,
-                              self.symm, self.spin, self.eref,
-                              self.rho0, self.Sliq, self.D, self.dE)
+        with conventions(self.conventions):
+            return self.__class__(self.atoms, label, self.freqs,
+                                  self.symm, self.spin, self.eref,
+                                  self.rho0, self.Sliq, self.D, self.dE)
 
 
 class Adsorbate(_Thermo):
@@ -485,10 +503,11 @@ class Adsorbate(_Thermo):
         label = self.label
         if newlabel is not None:
             label = newlabel
-        return self.__class__(self.atoms, label, self.freqs,
-                              self.ts, self.spin, self.sites,
-                              self.lattice, self.eref, self.dE,
-                              self.symm)
+        with conventions(self.conventions):
+            return self.__class__(self.atoms, label, self.freqs,
+                                  self.ts, self.spin, self.sites,
+                                  self.lattice, self.eref, self.dE,
+                                  self.symm)
 
 
 class _Reactants:

@@ -31,6 +31,10 @@ def row_to_thermo(row):
     D = get_data(row, 'D')
     S = get_data(row, 'S')
     pref = row.data.get('pref')  # absent in databases written before 2.1
+    if pref is not None or rhoref == 1.:
+        # unused with pref; else the default, which depends on
+        # micki.conventions
+        rhoref = None
 
     if thermo == 'Adsorbate':
         return Adsorbate(row.toatoms(), name, freqs,

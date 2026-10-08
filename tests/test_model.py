@@ -19,6 +19,8 @@ from ase.calculators.singlepoint import SinglePointCalculator
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import wgs  # noqa: E402
+import micki  # noqa: E402
+from micki.masses import masses  # noqa: E402
 from micki import (Model, Reaction, Gas, Liquid, Electron,  # noqa: E402
                    EnergyReference, Lattice)
 from micki.db import read_from_db  # noqa: E402
@@ -442,6 +444,98 @@ class FirstOrderLateralTest(unittest.TestCase):
         np.testing.assert_allclose(results[1], results[0], rtol=1e-6)
         # the response lowers the CO repulsion below theta_tot = 1
         self.assertGreater(results[0][0], 0.47)
+
+
+class ConventionsTest(unittest.TestCase):
+    """micki.conventions('catmap') changes defaults, nothing else."""
+
+    T = 548.
+
+    def setUp(self):
+        warnings.simplefilter('ignore')
+
+    def _o_co(self, sp, **kw):
+        return Reaction(sp['o'] + sp['co'], sp['co2_g'], ts=sp['o-co'], **kw)
+
+    def test_default_unchanged(self):
+        self.assertEqual(micki.get_conventions(), 'micki')
+        sp = wgs.build_species()
+        self.assertIsNone(sp['co_g'].pref)
+        self.assertEqual(sorted(sp['co_g'].mass), [masses['C'], masses['O']])
+        rxn = self._o_co(sp)
+        self.assertEqual((rxn.clip, rxn.alpha_fixed, rxn.ts_follows_dE),
+                         (None, None, True))
+
+    def test_catmap_defaults(self):
+        from ase.data import atomic_masses, atomic_numbers
+        with micki.conventions('catmap'):
+            sp = wgs.build_species()
+            rxn = self._o_co(sp)
+            explicit = self._o_co(sp, explicit_ts=True)
+            overridden = self._o_co(sp, clip=None, alpha=None)
+            stick = Reaction(sp['co_g'], sp['co'], method='STICK')
+            diequil = Reaction(2 * sp['oh'], sp['o'] + sp['h2o'],
+                               method='DIEQUIL')
+            gas = Gas(sp['co_g'].atoms, 'x', sp['co_g'].freqs, rhoref=1.)
+        self.assertEqual(micki.get_conventions(), 'micki')
+        self.assertEqual(sp['co_g'].pref, 1.)
+        self.assertEqual(sorted(sp['co_g'].mass),
+                         [atomic_masses[atomic_numbers[s]] for s in 'CO'])
+        self.assertEqual((rxn.clip, rxn.alpha_fixed, rxn.ts_follows_dE),
+                         ('coverage', 0.5, False))
+        self.assertEqual((explicit.alpha_fixed, explicit.explicit_ts),
+                         (None, True))
+        self.assertEqual((overridden.clip, overridden.alpha_fixed),
+                         (None, None))
+        self.assertEqual(stick.clip, 'coverage')
+        self.assertIsNone(diequil.clip)
+        self.assertIsNone(gas.pref)
+        # copies keep their conventions
+        self.assertEqual(sp['co_g'].copy().pref, 1.)
+        self.assertEqual(sp['co'].copy().conventions, 'catmap')
+
+    def test_ts_does_not_follow_dE(self):
+        # under CatMap's conventions a reactant's dE moves only the
+        # reactant: the forward barrier drops by the full shift
+        barriers = {}
+        for name in ('micki', 'catmap'):
+            with micki.conventions(name):
+                sp = wgs.build_species()
+                rxn = self._o_co(sp, alpha=0.5, clip=None)
+            for shift in (0., 0.05):
+                sp['co'].dE += shift
+                rxn.update(T=self.T, Asite=wgs.ASITE, L=0, force=True)
+                barriers[name, shift] = float(sympy.sympify(rxn.dG_act).subs(
+                    {s: 0 for s in sympy.sympify(rxn.dG_act).free_symbols}))
+        self.assertAlmostEqual(barriers['micki', 0.05]
+                               - barriers['micki', 0.], -0.025, places=10)
+        self.assertAlmostEqual(barriers['catmap', 0.05]
+                               - barriers['catmap', 0.], -0.05, places=10)
+
+    def test_model_checks(self):
+        sp = wgs.build_species()
+        with micki.conventions('catmap'):
+            sp_c = wgs.build_species()
+        model = Model(self.T, wgs.ASITE)
+        with self.assertRaisesRegex(ValueError, 'conventions'):
+            model.add_reactions({'a': self._o_co(sp), 'b': self._o_co(sp_c)})
+        with micki.conventions('catmap'):
+            rxn = self._o_co(sp_c)
+        with self.assertRaisesRegex(ValueError, 'conventions'):
+            Model(self.T, wgs.ASITE).add_reactions(
+                {'a': Reaction(sp['o'] + sp['co'], sp['co2_g'],
+                               ts=sp_c['o-co'])})
+        model = Model(self.T, wgs.ASITE)
+        model.add_reactions({'a': rxn})
+        with self.assertWarnsRegex(RuntimeWarning, 'lattice'):
+            model.lattice = {sp_c['slab']: {sp_c['slab']: 6}}
+
+    def test_invalid_name(self):
+        with self.assertRaises(ValueError):
+            micki.set_conventions('cantera')
+        with self.assertRaises(ValueError):
+            with micki.conventions('cantera'):
+                pass
 
 
 class LatticeTest(unittest.TestCase):

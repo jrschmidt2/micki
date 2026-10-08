@@ -42,7 +42,14 @@ python -m unittest discover -s tests -v
 
 ### Comparing with CatMap:
 Micki's defaults follow Hermes et al., J. Chem. Phys. 151, 014112 (2019).
-Non-default options reproduce CatMap's conventions:
+`micki.set_conventions('catmap')` (or `with micki.conventions('catmap'):`
+around building species and reactions) switches the defaults to CatMap's:
+gases at 1 bar with standard atomic weights, `clip='coverage'`, `alpha=0.5`,
+transition states that follow only the lateral interactions of their
+initial and final states (not `dE` shifts, which then act like energy
+changes in CatMap, also in thermodynamic rate control), and a warning if a
+lattice is set. Explicitly given arguments still win. The individual options
+are:
 
 | CatMap | Micki |
 |---|---|
@@ -55,10 +62,11 @@ Non-default options reproduce CatMap's conventions:
 | explicit transition-state interaction parameters | TS rows in `first_order`, `Reaction(..., explicit_ts=True)` |
 | no configurational entropy | no `Model.lattice` |
 
-`tests/catmap_wgs.py` builds a water-gas shift model this way;
+`tests/catmap_wgs.py` builds a water-gas shift model under
+`micki.conventions('catmap')`;
 `tests/test_catmap.py` checks it against CatMap's own solution (agreement
-~1e-13). CatMap itself also hard-codes CODATA-2010 kB and h, uses standard
-atomic weights in collision prefactors, ignores the number of sites of
+~1e-13). CatMap itself also hard-codes CODATA-2010 kB and h (a ~5e-6
+effect on rates), ignores the number of sites of
 multidentate species in its site balance, and fits interaction and
 transition-state energies to its descriptors unless told otherwise; for a
 one-to-one comparison use the energies and interaction matrix CatMap reports.

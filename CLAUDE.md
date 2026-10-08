@@ -61,6 +61,7 @@ Consequences to keep in mind:
 - `eref.py: EnergyReference` — solves a linear system for per-element reference energies from N structures containing N elements.
 - `db.py` — round-trips species to/from an ASE database (`read_from_db`, `_Thermo.save_to_db`); rows store `freqs`, `thermo`, `sites`, `ts`, etc. in `row.data`.
 - `lattice.py: Lattice` — site neighbor lists for configurational entropy.
+- `conventions.py` — `set_conventions('micki'|'catmap')`, context manager `conventions(...)` (a `ContextVar`). Species and reactions record `.conventions` at construction (copies keep it); under 'catmap' unset defaults become `Gas` pref=1, ASE standard atomic weights for all species, `Reaction` clip='coverage' (TST/EQUIL/STICK only), alpha=0.5 (unless explicit_ts), and `Reaction.ts_follows_dE = False` (the TS follows only lateral terms, so dE acts like a CatMap energy change, also in TRC). `DEFAULT` sentinel: explicit `clip=None`/`alpha=None` mean no clip / computed alpha. `Model.add_reactions` raises on mixed conventions; a lattice warns. db rows with rhoref 1 (or a pref) load with rhoref=None so the flag's default applies.
 - `lateral.py: first_order` — writes CatMap's first-order lateral interactions (Σ_j F(θ_tot)·ε_ij·θ_j, response 'linear', 'piecewise_linear', 'smooth_piecewise_linear') into `species.lateral`; TS rows go with `Reaction(..., explicit_ts=True)`. `Piecewise` branches divide by `Max(θ, x0)` so numpy's evaluation of untaken branches stays finite.
 - `io.py` — VASP output parsing; `masses.py` — atomic mass table.
 

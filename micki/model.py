@@ -13,6 +13,7 @@ from micki.reactants import _Thermo, _Fluid, _Reactants, Gas, Liquid, Adsorbate
 from micki.reactants import Electron
 
 from micki.lattice import Lattice
+from micki.conventions import DEFAULT, get_conventions
 from micki.solver import IDASolver
 
 
@@ -47,11 +48,27 @@ class Reaction:
     EQUIL then has the barrier Max(dG, 0) and STICK the collision rate
     times exp(-Max(dG, 0)/kT). dG refers to the reference states of the
     species (see Gas(..., pref=...)). krev = kfor / keq in all cases.
+
+    Under micki.set_conventions('catmap'), clip defaults to 'coverage' (for
+    TST, EQUIL and STICK), alpha to 0.5 (unless explicit_ts), and the TS
+    follows only the lateral interactions of the reactants and products,
+    not their dE (see micki.conventions). clip=None and alpha=None given
+    explicitly mean no clipping and a computed alpha.
     """
 
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
-                 dG_act=None, dground=False, reversible=True, clip=None,
-                 alpha=None, explicit_ts=False):
+                 dG_act=None, dground=False, reversible=True, clip=DEFAULT,
+                 alpha=DEFAULT, explicit_ts=False):
+        self.conventions = get_conventions()
+        catmap = self.conventions == 'catmap'
+        if clip is DEFAULT:
+            clip_default = True
+            clip = 'coverage' if catmap else None
+        else:
+            clip_default = False
+        if alpha is DEFAULT:
+            alpha = 0.5 if catmap and ts is not None and not explicit_ts \
+                else None
         if dground:
             raise ValueError("dground has been replaced by "
                              "clip='zero_coverage'")
@@ -217,9 +234,13 @@ class Reaction:
         self.Nfluid = self.Nreact_fluid + self.Nprod_fluid
         self.Nads = self.Nreact_ads + self.Nprod_ads
 
+        if clip_default and self.method not in ('TST', 'EQUIL', 'STICK'):
+            clip = None
         self.clip = clip
         self.alpha_fixed = alpha
         self.explicit_ts = explicit_ts
+        # under CatMap's conventions, a TS does not follow dE shifts
+        self.ts_follows_dE = not catmap
         if clip == 'coverage' and self.method not in ('TST', 'EQUIL',
                                                       'STICK'):
             raise ValueError("clip='coverage' is only implemented for the "
@@ -259,8 +280,14 @@ class Reaction:
             Gr = self.reactants.get_G(T)
             Gp = self.products.get_G(T)
 
-            dEr = np.sum([species.lateral + species.dE for species in self.reactants])
-            dEp = np.sum([species.lateral + species.dE for species in self.products])
+            # coverage-dependent energy corrections that the TS follows
+            # (weighted with alpha)
+            if self.ts_follows_dE:
+                dEr = np.sum([species.lateral + species.dE for species in self.reactants])
+                dEp = np.sum([species.lateral + species.dE for species in self.products])
+            else:
+                dEr = np.sum([species.lateral for species in self.reactants])
+                dEp = np.sum([species.lateral for species in self.products])
 
             # barriers without dE shifts and coverage dependence
             ts_lateral = sum(species.lateral for species in self.ts)
@@ -514,11 +541,32 @@ class Model:
         self.lattice = lattice
         self.reactor = reactor
 
+    def _check_conventions(self, reactions):
+        """Reactions and species of one model must have been built under the
+        same conventions (micki.conventions); CatMap has no configurational
+        entropy, so a lattice warns."""
+        used = set()
+        for reaction in reactions:
+            used.add(reaction.conventions)
+            for species in reaction.species + list(reaction.ts or []):
+                used.add(species.conventions)
+        if len(used) > 1:
+            raise ValueError('Reactions and species built under different '
+                             'conventions ({}) cannot be combined; see '
+                             'micki.conventions'.format(
+                                 ', '.join(sorted(used))))
+        if 'catmap' in used and self.lattice is not None:
+            warnings.warn('A lattice adds configurational entropy, which '
+                          "CatMap's conventions do not have",
+                          RuntimeWarning, stacklevel=3)
+
     def add_reactions(self, reactions):
         # Set up list of reactions and species
         for name, reaction in reactions.items():
             if not isinstance(reaction, Reaction):
                 raise TypeError('{} is not a Reaction'.format(name))
+        self._check_conventions(self._reactions + list(reactions.values()))
+        for name, reaction in reactions.items():
             if reaction in self._reactions:
                 continue
             self._reactions.append(reaction)
@@ -613,6 +661,7 @@ class Model:
             self._lattice = Lattice(lattice)
         else:
             raise ValueError('Unable to parse lattice!')
+        self._check_conventions(self._reactions)
         # Configurational entropies depend on the lattice, so species and
         # reactions are recomputed.
         for species in self._species + self.vacancy:

@@ -1,18 +1,18 @@
 """The water-gas shift model in CatMap's conventions, for test_catmap.py.
 
-micki's options for CatMap's conventions applied to the WGS model of wgs.py:
-gases referenced to 1 bar (Gas pref=1), every barrier clipped at the higher
-of the initial and final states at the current coverages
-(clip='coverage'), CO adsorption non-activated (collision theory, STICK;
-CatMap computes it with standard atomic weights, so CO gets those masses
-here), the other steps without a transition state barrierless (EQUIL), no
+The WGS model of wgs.py built under micki.conventions('catmap'): gases
+referenced to 1 bar and standard atomic weights, every barrier clipped at
+the higher of the initial and final states at the current coverages,
+transition states following only the lateral interactions of their initial
+and final states; CO adsorption non-activated (collision theory, STICK),
+the other steps without a transition state barrierless (EQUIL), no
 configurational entropy (no lattice), fixed gas pressures. Lateral
 interactions are CatMap's first-order model with the WGS interaction
 parameters, in two variants:
 
 - 'intermediate': linear response; transition states follow the initial
-  and final states with weight 1/2 each (alpha=0.5; CatMap's
-  'intermediate_state').
+  and final states with weight 1/2 each (the conventions' alpha=0.5;
+  CatMap's 'intermediate_state').
 - 'piecewise': piecewise-linear response (cutoff 0.25); transition states
   get explicit interaction rows equal to the sum of the initial-state rows
   (explicit_ts=True; CatMap's 'initial_state').
@@ -27,12 +27,11 @@ import os
 import sys
 
 import sympy as sym
-from ase.data import atomic_masses, atomic_numbers
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import wgs  # noqa: E402
-from micki import Model, Reaction  # noqa: E402
+from micki import Model, Reaction, conventions  # noqa: E402
 from micki.lateral import first_order  # noqa: E402
 from micki.model import _at_zero_coverage  # noqa: E402
 from micki.utils import bar_to_molar  # noqa: E402
@@ -72,56 +71,53 @@ CO2_STEPS = ('o-co', 'oco-h', 'oco-h-o', 'oco-h-oh')
 
 
 def build(variant):
-    """Species, reactions and interaction rows of the CatMap-style model."""
-    sp = wgs.build_species()
-    for name in GASES:
-        sp[name].pref = 1.
-    co_g = sp['co_g']
-    co_g.mass = [atomic_masses[atomic_numbers[a.symbol]] for a in co_g.atoms]
-    ads = [sp[name] for name in ADS]
-    # interaction rows from the WGS lateral interactions (linear in the
-    # coverages)
-    eps = {}
-    for i in ads:
-        terms = sym.sympify(i.lateral).as_coefficients_dict()
-        eps[i] = {j: float(terms[j.symbol]) for j in ads
-                  if terms.get(j.symbol)}
-    rows = dict(eps)
-    if variant == 'piecewise':
-        for name, (initial, _, ts, _) in STEPS.items():
-            if ts is None:
-                continue
-            row = {}
-            for i in initial:
-                for j, value in eps[sp[i]].items():
-                    row[j] = row.get(j, 0.) + value
-            rows[sp[name]] = row
-    response = 'linear' if variant == 'intermediate' else 'piecewise_linear'
-    first_order(ads, rows, response=response, cutoff=0.25)
+    """Species, reactions and interaction rows of the CatMap-style model,
+    built under micki.conventions('catmap')."""
+    with conventions('catmap'):
+        sp = wgs.build_species()
+        ads = [sp[name] for name in ADS]
+        # interaction rows from the WGS lateral interactions (linear in the
+        # coverages)
+        eps = {}
+        for i in ads:
+            terms = sym.sympify(i.lateral).as_coefficients_dict()
+            eps[i] = {j: float(terms[j.symbol]) for j in ads
+                      if terms.get(j.symbol)}
+        rows = dict(eps)
+        if variant == 'piecewise':
+            for name, (initial, _, ts, _) in STEPS.items():
+                if ts is None:
+                    continue
+                row = {}
+                for i in initial:
+                    for j, value in eps[sp[i]].items():
+                        row[j] = row.get(j, 0.) + value
+                rows[sp[name]] = row
+        response = ('linear' if variant == 'intermediate'
+                    else 'piecewise_linear')
+        first_order(ads, rows, response=response, cutoff=0.25)
 
-    ts_kw = ({'alpha': 0.5} if variant == 'intermediate'
-             else {'explicit_ts': True})
-    clip = {'clip': 'coverage'}
+        # the conventions supply clip='coverage' and alpha=0.5
+        ts_kw = {} if variant == 'intermediate' else {'explicit_ts': True}
 
-    def tst(react, prod, ts):
-        return Reaction(react, prod, ts=sp[ts], **ts_kw, **clip)
+        def tst(react, prod, ts):
+            return Reaction(react, prod, ts=sp[ts], **ts_kw)
 
-    rxns = {
-        'co_ads': Reaction(sp['co_g'], sp['co'], method='STICK', **clip),
-        'h2o_ads': Reaction(sp['h2o_g'], sp['h2o'], method='EQUIL', **clip),
-        'h2_ads': Reaction(sp['h2_g'], 2 * sp['h'], method='EQUIL', **clip),
-        'ho-h': tst(sp['h2o'], sp['oh'] + sp['h'], 'ho-h'),
-        'o-h': tst(sp['oh'], sp['o'] + sp['h'], 'o-h'),
-        'o-h-oh': Reaction(2 * sp['oh'], sp['o'] + sp['h2o'], method='EQUIL',
-                           **clip),
-        'o-co': tst(sp['o'] + sp['co'], sp['co2_g'], 'o-co'),
-        'co-oh': tst(sp['cooh'], sp['co'] + sp['oh'], 'co-oh'),
-        'oco-h': tst(sp['cooh'] + sp['slab'], sp['co2_g'] + sp['h'], 'oco-h'),
-        'oco-h-o': Reaction(sp['cooh'] + sp['o'], sp['co2_g'] + sp['oh'],
-                            method='EQUIL', **clip),
-        'oco-h-oh': Reaction(sp['cooh'] + sp['oh'], sp['co2_g'] + sp['h2o'],
-                             method='EQUIL', **clip),
-    }
+        rxns = {
+            'co_ads': Reaction(sp['co_g'], sp['co'], method='STICK'),
+            'h2o_ads': Reaction(sp['h2o_g'], sp['h2o']),
+            'h2_ads': Reaction(sp['h2_g'], 2 * sp['h']),
+            'ho-h': tst(sp['h2o'], sp['oh'] + sp['h'], 'ho-h'),
+            'o-h': tst(sp['oh'], sp['o'] + sp['h'], 'o-h'),
+            'o-h-oh': Reaction(2 * sp['oh'], sp['o'] + sp['h2o']),
+            'o-co': tst(sp['o'] + sp['co'], sp['co2_g'], 'o-co'),
+            'co-oh': tst(sp['cooh'], sp['co'] + sp['oh'], 'co-oh'),
+            'oco-h': tst(sp['cooh'] + sp['slab'], sp['co2_g'] + sp['h'],
+                         'oco-h'),
+            'oco-h-o': Reaction(sp['cooh'] + sp['o'], sp['co2_g'] + sp['oh']),
+            'oco-h-oh': Reaction(sp['cooh'] + sp['oh'],
+                                 sp['co2_g'] + sp['h2o']),
+        }
     return sp, rxns, eps, response
 
 
