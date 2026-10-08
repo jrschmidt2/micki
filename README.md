@@ -65,8 +65,12 @@ are:
 `tests/catmap_wgs.py` builds a water-gas shift model under
 `micki.conventions('catmap')`;
 `tests/test_catmap.py` checks it against CatMap's own solution (agreement
-~1e-13). CatMap itself also hard-codes CODATA-2010 kB and h (a ~5e-6
-effect on rates), ignores the number of sites of
+~1e-13), as well as two further models (ammonia synthesis; ethylene
+hydrogenation with two site types) that CatMap solved natively with its own
+thermochemistry (free energies agree to ~1e-15 eV, rate constants to ~1e-14,
+coverages to ~1e-13). CatMap itself also hard-codes CODATA-2010 kB and h (a
+~5e-6 effect on rates) and, in its collision-theory prefactor, the atomic
+mass unit and electron volt (5e-8), ignores the number of sites of
 multidentate species in its site balance, and fits interaction and
 transition-state energies to its descriptors unless told otherwise; for a
 one-to-one comparison use the energies and interaction matrix CatMap reports.
