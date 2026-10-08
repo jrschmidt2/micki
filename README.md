@@ -9,7 +9,8 @@ a [user guide](https://github.com/jrschmidt2/micki/blob/master/docs/user-guide.m
 a complete [reference](https://github.com/jrschmidt2/micki/blob/master/docs/reference.md)
 of all classes and options, [sensitivity analysis](https://github.com/jrschmidt2/micki/blob/master/docs/analysis.md),
 [CatMap conventions](https://github.com/jrschmidt2/micki/blob/master/docs/catmap.md)
-and a [water-gas shift example](https://github.com/jrschmidt2/micki/blob/master/docs/examples/wgs.md).
+and a [water-gas shift example](https://github.com/jrschmidt2/micki/blob/master/docs/examples/wgs.md)
+(script: [examples/wgs.py](https://github.com/jrschmidt2/micki/blob/master/examples/wgs.py)).
 The theory is described in E. D. Hermes, A. N. Janes, J. R. Schmidt,
 J. Chem. Phys. 151, 014112 (2019), https://doi.org/10.1063/1.5109116; please
 cite it if you use Micki.

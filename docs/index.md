@@ -15,7 +15,8 @@ a CSTR or PFR or for the steady state directly.
 - [CatMap conventions](catmap.md): reproducing CatMap models, and how micki and
   CatMap compare.
 - [Example: water-gas shift on Pt](examples/wgs.md): a published model with
-  lateral interactions, compared with experiment.
+  lateral interactions, compared with experiment; the runnable script is
+  [`examples/wgs.py`](../examples/wgs.py).
 
 Installation is described in the [README](../README.md).
 
