@@ -1,3 +1,5 @@
+"""Reading structures and frequencies from VASP output"""
+
 import numpy as np
 
 from ase.io import read
@@ -6,6 +8,15 @@ from ase.units import _hplanck, J, m, kg
 from micki.masses import masses
 
 def parse_vasp_out(filename, ignore_atoms=()):
+    """Structure and vibrational frequencies from a VASP frequency
+    calculation (OUTCAR or vasprun.xml), as (atoms, freqs).
+
+    The Hessian is read and diagonalized with micki's masses, so that all
+    species use the same masses and unit conversions. freqs are in eV,
+    sorted ascending, imaginary modes as negative values. ignore_atoms
+    (indices, Atom objects or element symbols) are left out of the Hessian
+    (partial Hessian, e.g. to drop metal atoms).
+    """
     atoms = read(filename, index=0)
     for atom in atoms:
         atom.mass = masses[atom.symbol]

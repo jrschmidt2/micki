@@ -28,32 +28,88 @@ def _at_zero_coverage(expr):
 class Reaction:
     """Elementary step reactants <-> products.
 
-    ts: transition state species, rate law method='TST' by default (else
-    'EQUIL'). Its free energy follows the coverage-dependent energy
-    corrections (lateral interactions and dE) of the reactants and products
-    as G_TS + (1 - alpha) sum_reactants + alpha sum_products, where alpha is
-    computed self-consistently from the forward and reverse barriers (Hermes
-    thesis eqs. 3.58-3.60) unless given. With explicit_ts=True only the TS's
-    own energy (including ts.lateral) is used.
+    Sides are species or sums of species (e.g. 2 * sp['h'] + sp['o2']);
+    empty sites needed to balance the sites of both sides are added
+    automatically (the vacancy species of the adsorbates' sites).
 
-    clip: how negative barriers are handled. None: an error for a negative
-    barrier at zero coverage (before dE shifts and lateral interactions).
-    'zero_coverage' (TST only): at zero coverage, a negative forward
-    barrier is set to 0 and a negative reverse barrier makes the forward
-    barrier dG; the choice is then kept for all coverages (a forward
-    barrier set to 0 loses its coverage dependence). 'coverage' (TST,
-    EQUIL, STICK, or a given dG_act): the forward barrier is
-    Max(dG_act, dG, 0) at the current coverages, i.e. the transition state
-    is raised to the higher of the initial and final states, as in CatMap;
-    EQUIL then has the barrier Max(dG, 0) and STICK the collision rate
-    times exp(-Max(dG, 0)/kT). dG refers to the reference states of the
-    species (see Gas(..., pref=...)). krev = kfor / keq in all cases.
+    Parameters
+    ----------
+    reactants, products : species or sum of species
+    ts : Adsorbate or sum of species, optional
+        Transition state. Its free energy follows the coverage-dependent
+        energy corrections (lateral interactions + dE) of the reactants and
+        products as G_TS + (1 - alpha) sum_reactants + alpha sum_products.
+    method : str, optional
+        Rate law; default 'TST' with a transition state (or dG_act), else
+        'EQUIL'. Rate constants are per site and second, with fluid
+        concentrations in M (kfor in 1/(M^n s) for n fluid reactants).
+
+        - 'TST': transition state theory, kfor = kT/h exp(-dG_act/kT)
+          (from ts, or from dG_act).
+        - 'EQUIL': no barrier: kfor = kT/h, times keq if keq < 1 at zero
+          coverage (the barrier is max(0, dG) at zero coverage).
+        - 'DIEQUIL': like EQUIL but smooth, 1/kfor = 1/k1 + 1/(k1 keq)
+          with k1 = kT/h.
+        - 'STICK': adsorption of one fluid by collision theory (TST with
+          a 2D-ideal-gas transition state, sticking coefficient 1).
+        - 'ER': Eley-Rideal, collision theory with sticking coefficient S0,
+          combined with the reverse direction.
+        - 'DIFF': diffusion of a fluid through a stagnant layer of
+          thickness Model.z to the surface (needs the fluid's D).
+        - 'DIFF_LIQ': diffusion-limited reaction of two Liquid species
+          (Smoluchowski; needs D and the van der Waals radii).
+
+        krev = kfor / keq for all rate laws (detailed balance).
+    S0 : float
+        Sticking coefficient for 'ER'.
+    dG_act : float, optional
+        Activation free energy in eV, instead of a transition state.
+    dground : bool
+        Removed; raises a ValueError. Use clip='zero_coverage'.
+    reversible : bool
+        If False, the reverse rate is omitted from the rate expression.
+    clip : None, 'zero_coverage' or 'coverage'
+        How negative barriers are handled. None (default): an error for a
+        negative barrier at zero coverage (computed without dE shifts and
+        lateral interactions). 'zero_coverage' (TST only): at zero
+        coverage, a negative forward barrier is set to 0 and a negative
+        reverse barrier makes the forward barrier dG; the choice is then
+        kept for all coverages (a forward barrier set to 0 loses its
+        coverage dependence). 'coverage' (TST, EQUIL, STICK, or a given
+        dG_act): the forward barrier is Max(dG_act, dG, 0) at the current
+        coverages, i.e. the transition state is raised to the higher of the
+        initial and final states, as in CatMap; EQUIL then has the barrier
+        Max(dG, 0) and STICK the collision rate times exp(-Max(dG, 0)/kT).
+        dG refers to the reference states of the species (see Gas(...,
+        pref=...)).
+    alpha : float or None
+        Weight (0 to 1) with which the transition state follows the
+        products' energy corrections. None (default): computed
+        self-consistently from the forward and reverse barriers
+        (BEP-like; Hermes thesis eqs. 3.58-3.60). CatMap's initial_state,
+        intermediate_state and final_state are 0, 0.5 and 1.
+    explicit_ts : bool
+        Use only the transition state's own energy, including ts.lateral
+        (no interpolation between reactants and products).
 
     Under micki.set_conventions('catmap'), clip defaults to 'coverage' (for
-    TST, EQUIL and STICK), alpha to 0.5 (unless explicit_ts), and the TS
-    follows only the lateral interactions of the reactants and products,
-    not their dE (see micki.conventions). clip=None and alpha=None given
-    explicitly mean no clipping and a computed alpha.
+    TST, EQUIL and STICK), alpha to 0.5 (unless explicit_ts), and the
+    transition state follows only the lateral interactions of the
+    reactants and products, not their dE (see micki.conventions).
+    clip=None and alpha=None given explicitly mean no clipping and a
+    computed alpha.
+
+    Attributes
+    ----------
+    keq, kfor, krev : float or sympy expression
+        Equilibrium and rate constants at the last update (sympy
+        expressions in the coverages with lateral interactions).
+    dG, dH, dS : reaction free energy (eV), enthalpy, entropy
+    dG_act, dH_act, dS_act : activation free energy, enthalpy, entropy
+    alpha : the transition-state weight used
+    scale : dict
+        Multipliers of 'dH_act', 'dS_act', 'kfor' and 'krev' (set_scale),
+        for sensitivity analysis.
     """
 
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
@@ -252,14 +308,21 @@ class Reaction:
                              'names are {}'.format(param, self.scale_params))
 
     def get_scale(self, param):
+        """Multiplier of 'dH_act', 'dS_act', 'kfor' or 'krev'."""
         self._check_scale_param(param)
         return self.scale[param]
 
     def set_scale(self, param, value):
+        """Set the multiplier of 'dH_act', 'dS_act', 'kfor' or 'krev' (takes
+        effect at the next update)."""
         self._check_scale_param(param)
         self.scale[param] = value
 
     def update(self, T=None, Asite=None, L=None, force=False):
+        """Recompute the thermochemistry and rate constants at temperature
+        T (K), site area Asite (m^2) and diffusion length L (m), if any of
+        them (or a scale factor) changed, or if force. The Model calls
+        this."""
         if not force and not self.is_update_needed(T, Asite, L):
             return
 
@@ -372,14 +435,17 @@ class Reaction:
         return False
 
     def get_keq(self, T=None, Asite=None, L=None):
+        """Equilibrium constant (see update() for the arguments)."""
         self.update(T, Asite, L)
         return self.keq
 
     def get_kfor(self, T=None, Asite=None, L=None):
+        """Forward rate constant (see update() for the arguments)."""
         self.update(T, Asite, L)
         return self.kfor
 
     def get_krev(self, T=None, Asite=None, L=None):
+        """Reverse rate constant (see update() for the arguments)."""
         self.update(T, Asite, L)
         return self.krev
 
@@ -518,6 +584,50 @@ class Reaction:
 
 
 class Model:
+    """A microkinetic model: reactions, their species, and the DAE system
+    d(y)/dt = dypdr . r(y) solved with SUNDIALS IDA.
+
+    Parameters
+    ----------
+    T : float
+        Temperature in K.
+    Asite : float
+        Area of one adsorption site in m^2 (used by STICK, ER, DIFF).
+    z : float
+        Diffusion length in m (DIFF rate law).
+    lattice : micki.Lattice or dict, optional
+        Site lattice, e.g. {slab: {slab: 6}} for one site type with 6
+        neighbors; gives multi-site species their configurational entropy
+        and sets the relative amounts of different site types.
+    reactor : 'CSTR' or 'PFR'
+        'CSTR': all concentrations are differential variables. 'PFR':
+        adsorbate coverages are algebraic (pseudo steady state), so
+        solve() integrates the fluid concentrations along the reactor.
+    rhocat : float
+        Concentration of catalytic sites (mol/L) that converts per-site
+        rates into changes of fluid concentrations, d(c)/dt = rhocat *
+        sum(nu r). Irrelevant for fixed fluids.
+    analytic_jac : bool
+        Give IDA the exact (complex-step) Jacobian instead of its
+        difference-quotient approximation. The steady-state Newton solver
+        always uses it.
+
+    Changing T, Asite, z or lattice after set_initial_conditions rebuilds
+    the model.
+
+    Attributes after solving
+    ------------------------
+    U, r : list of dict
+        Concentrations/coverages (species label -> value, including
+        vacancies) and net rates (reaction name -> 1/s per site) at the
+        output times.
+    t : float or array
+        Output times (s).
+    steady_state_method : str
+        Path taken by find_steady_state: 'newton', 'integrate+newton' or
+        'integrate'.
+    """
+
     def __init__(self, T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
                  analytic_jac=False):
         self.reactions = OrderedDict()
@@ -561,6 +671,9 @@ class Model:
                           RuntimeWarning, stacklevel=3)
 
     def add_reactions(self, reactions):
+        """Add reactions, a dict {name: Reaction}, and their species. The
+        names label the rates in the results. Reactions and species built
+        under different micki.conventions cannot be combined."""
         # Set up list of reactions and species
         for name, reaction in reactions.items():
             if not isinstance(reaction, Reaction):
@@ -579,6 +692,8 @@ class Model:
             reaction.update(T=self.T, Asite=self.Asite, L=self.z)
 
     def set_solvent(self, solvent):
+        """Make the Liquid species labeled solvent the solvent: its
+        concentration is fixed (not a variable)."""
         # Solvent will not diffuse even in diffusion system
         if solvent is not None:
             if self.solvent is not None:
@@ -590,6 +705,8 @@ class Model:
             self.solvent = solvent
 
     def set_fixed(self, fixed):
+        """Keep the species with these labels (a label or a list) at their
+        initial concentrations, e.g. gases at constant partial pressure."""
         # Fixed species are removed from the differential equations
         if isinstance(fixed, str):
             fixed = [fixed]
@@ -682,6 +799,16 @@ class Model:
     lattice = property(get_lattice, set_lattice, doc='Model lattice')
 
     def set_initial_conditions(self, U0):
+        """Set the initial state and build the model's equations and solver.
+
+        U0 is a dict {label: value}: fluid concentrations in M (e.g. from
+        micki.utils.bar_to_molar) and adsorbate coverages (fractions of
+        their site type); species not given start at 0, and empty sites
+        are computed from the site balances (values given for vacancies
+        are ignored). Raises ValueError if a rate expression refers to a
+        species that is not in the model (e.g. through lateral
+        interactions) or if the sites are over-full.
+        """
         if self.initialized:
             self.finalize()
 
@@ -927,12 +1054,16 @@ class Model:
         """Find the steady state starting from the initial conditions.
 
         By default the steady-state equations are solved directly with
-        Newton's method, falling back to time integration (in steps of dt,
-        up to maxiter steps, until max |dy/dt| < epsilon) if Newton does
-        not converge from the initial conditions. method='integrate' only
-        integrates. self.steady_state_method records the path taken
-        ('newton', 'integrate+newton' or 'integrate'); the returned t is
-        inf when Newton alone was used.
+        Newton's method, falling back to time integration (in steps of dt
+        seconds, up to maxiter steps, until max |dy/dt| < epsilon) and a
+        final Newton polish if Newton does not converge from the initial
+        conditions. method='integrate' only integrates (also used for
+        models with conserved quantities, e.g. without fixed species).
+        self.steady_state_method records the path taken ('newton',
+        'integrate+newton' or 'integrate').
+
+        Returns t, U, r: the time (inf when Newton alone was used), the
+        state {label: value} and the net rates {reaction name: rate}.
         """
         t, U1, dU1, r1 = self._solver.find_steady_state(dt, maxiter, epsilon,
                                                         method)
@@ -949,6 +1080,9 @@ class Model:
         return t, U, r
 
     def solve(self, t, ncp):
+        """Integrate from the initial conditions to time t (s), with ncp
+        output points. Returns U, r: lists of states and rates (dicts) at
+        the output times self.t. For a PFR, t is the residence time."""
         self.t, self.U1, self.dU1, self.r1 = self._solver.solve(ncp, t)
         self.U = []
         self.dU = []
@@ -963,6 +1097,8 @@ class Model:
         return self.U, self.r
 
     def finalize(self):
+        """Mark the model as not initialized (set_initial_conditions
+        rebuilds it)."""
         self.initialized = False
 
     def _eval_rate_constant(self, k, symbol_to_coverage):
@@ -984,6 +1120,8 @@ class Model:
             return sym.sympify(k).subs(symbol_to_coverage)
 
     def check_rates(self, U, epsilon=1e-6):
+        """Warn about rate constants above kT/h at state U (run after every
+        solve)."""
         symbol_to_coverage = {}
         for name, Ui in U.items():
             if name in self.species and self.species[name].symbol is not None:
@@ -1006,6 +1144,9 @@ class Model:
                                   RuntimeWarning, stacklevel=2)
 
     def copy(self, initialize=True):
+        """A new Model with the same settings, reactions, fixed species and
+        solvent (sharing the Reaction and species objects), initialized
+        with the same initial conditions if initialize."""
         newmodel = Model(self.T, self.Asite, z=self.z, lattice=self.lattice,
                          reactor=self.reactor, rhocat=self.rhocat,
                          analytic_jac=self.analytic_jac)

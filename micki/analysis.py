@@ -11,6 +11,28 @@ from micki.reactants import Adsorbate, _Fluid
 
 
 class ModelAnalysis:
+    """Steady-state sensitivity analysis of a model (finite differences).
+
+    Parameters
+    ----------
+    model : Model
+        The model, with reactions and fixed species set (normally a CSTR
+        with fixed fluids).
+    product_reaction : str
+        Name of the reaction whose net rate r is analyzed (e.g. the
+        product-forming step).
+    Uequil : dict
+        Initial conditions (as for Model.set_initial_conditions); the
+        steady state is found from them, and the rate orders perturb them.
+    tol : float
+        Tolerance of check_converged().
+    dt : float
+        Unused (kept for compatibility).
+
+    Attributes: U and r, the reference steady state and rates; rmid, the
+    rate of product_reaction there.
+    """
+
     def __init__(self, model, product_reaction, Uequil, tol=1e-3, dt=3600):
         self.model = model
         self.reaction_name = product_reaction
@@ -31,6 +53,9 @@ class ModelAnalysis:
         self.rmid = self.r[self.reaction_name]
 
     def campbell_rate_control(self, rxn_name, scale=0.001):
+        """Campbell's degree of rate control (k/r) dr/dk of reaction
+        rxn_name, scaling its forward and reverse rate constants together
+        by 1 -+ scale (central difference)."""
         reaction = self.model.reactions[rxn_name]
 
         subs = {}
@@ -97,9 +122,12 @@ class ModelAnalysis:
     def thermodynamic_rate_control(self, names, dg=None):
         """Degree of thermodynamic rate control, -(kT/r) dr/dG.
 
-        The free energies of all species in `names` are shifted together
-        by -dg and +dg (default 0.001 kT) and the derivative is taken by
-        central differences.
+        The free energies of all species in `names` (a label or a list)
+        are shifted together by -dg and +dg (default 0.001 kT, through their
+        dE) and the derivative is taken by central differences. Transition
+        states follow the shift through alpha (Hermes thesis eq. 4.4),
+        except under micki.conventions('catmap'), where they stay fixed as
+        in Campbell's original definition.
         """
         T = self.model.T
         if dg is None:
@@ -162,6 +190,8 @@ class ModelAnalysis:
         return (rlow - rhigh) * kB * T / (self.rmid * 2 * dg)
 
     def activation_barrier(self, dT=0.01):
+        """Apparent activation energy kB T^2 d ln(r)/dT in eV (central
+        difference with T -+ dT, steady states found from Uequil)."""
         T = self.model.T
 
         model = self.model.copy(initialize=False)
@@ -183,6 +213,9 @@ class ModelAnalysis:
         return kB * T**2 * (rhigh - rlow) / (self.rmid * 2 * dT)
 
     def rate_order(self, name, drho=0.05):
+        """Reaction order d ln(r) / d ln(c) in the species `name` (normally a
+        fixed fluid), changing its initial concentration by -+ drho
+        (relative)."""
         species = self.model.species[name]
 
         rhomid = self.Uequil[species.label]
@@ -277,6 +310,8 @@ class ModelAnalysis:
         return (rhomid / rmid) * dr / (4 * dg * drho)
 
     def check_converged(self, *vals):
+        """Raise ValueError if the last two of each sequence of dicts differ
+        by more than tol."""
         for val in vals:
             for i, key in enumerate(val[0]):
                 if np.abs(val[-1][key] - val[-2][key]) > self.tol:

@@ -22,11 +22,35 @@ from micki.utils import calculate_avg_vdw_radius, bar_to_molar
 
 
 class _Thermo:
-    """Generic thermodynamics object
+    """Base class of all species (Gas, Liquid, Adsorbate, Electron).
 
-    This is the base object that all reactant objects inherit from.
-    It initializes many parameters and provides methods for calculating
-    the partition function from translation, rotation, and vibration."""
+    Computes the partition function and the thermodynamic functions of a
+    species at temperature T from its electronic energy (atoms.calc
+    energy, minus the energy reference eref, plus dE) and its vibrational
+    frequencies (plus translation and rotation for fluids). Results are
+    cached per temperature (update()).
+
+    Common attributes:
+
+    label : str
+        Name of the species; also the name of its sympy Symbol (symbol),
+        which stands for its concentration (fluids, M) or coverage
+        (adsorbates) in rate expressions.
+    dE : float
+        Energy shift in eV added to the electronic energy, e.g. a
+        correction or fitting parameter. Also used by thermodynamic rate
+        control.
+    lateral : float or sympy expression
+        Coverage-dependent energy in eV (lateral interactions), in terms of
+        the symbols of adsorbates, e.g. 0.3 * co.symbol. Added to E, H and
+        G. The interaction matrix must be symmetric to be thermodynamically
+        consistent (Hermes et al., J. Chem. Phys. 151, 014112 (2019)).
+    scale : dict
+        Multipliers of the energy, entropy and enthalpy contributions
+        ('E', 'S': per mode, 'H'), for sensitivity analysis.
+    conventions : str
+        The micki.conventions in effect when the species was built.
+    """
 
     def __init__(self):
         self.T = None
@@ -150,7 +174,8 @@ class _Thermo:
     symbol = property(get_symbol, None)
 
     def update(self, T=None, force=False):
-        """Updates the object's thermodynamic properties"""
+        """Recompute the thermodynamic properties at T (if T, or the scale
+        factors, changed since the last update, or if force)."""
         if not self.is_update_needed(T) and not force:
             return
 
@@ -171,23 +196,33 @@ class _Thermo:
         return False
 
     def get_H(self, T=None):
+        """Enthalpy (eV) at T, including lateral interactions (a sympy
+        expression in the coverages if there are any)."""
         self.update(T)
         return (self.H + self.lateral) * self.scale['H']
 
     def get_S(self, T=None):
+        """Entropy (eV/K) at T."""
         self.update(T)
         return self.S['tot'] * self.scale['S']['tot']
 
     def get_G(self, T=None):
+        """Free energy G = H - TS (eV) at T: for fluids the chemical
+        potential at the reference state, for adsorbates the Helmholtz
+        energy."""
         self.update(T)
         T = self.T
         return self.get_H(T) - T * self.get_S(T)
 
     def get_E(self, T=None):
+        """Internal energy (eV) at T, including zero-point energy and
+        lateral interactions."""
         self.update(T)
         return (self.E['tot'] + self.lateral) * self.scale['E']['tot']
 
     def get_q(self, T=None):
+        """Partition function at T (fluids: per molecule at the reference
+        concentration)."""
         self.update(T)
         return self.q['tot']
 
@@ -195,6 +230,10 @@ class _Thermo:
         raise NotImplementedError
 
     def save_to_db(self, db):
+        """Write the species to an ASE database (a file name or an open
+        connection), to be read back with micki.db.read_from_db. Lattices,
+        energy references and lateral interactions are not stored (a
+        warning says so)."""
         if isinstance(db, str):
             db = connect(db)
         elif not isinstance(db, Database):
@@ -326,7 +365,8 @@ class _Thermo:
 
 
 class _Fluid(_Thermo):
-    """Master object for both liquids and gasses"""
+    """Common base class of Gas and Liquid (ideal-gas translation, rigid
+    rotor, harmonic vibrations); see Gas for the parameters."""
     def __init__(self, atoms, label, freqs=None, symm=1, spin=0.,
                  eref=None, rhoref=None, dE=0., pref=None):
         _Thermo.__init__(self)
@@ -387,6 +427,7 @@ class _Fluid(_Thermo):
             self.S['vib']
 
     def get_R(self):
+        """Average van der Waals radius in Angstrom (used by DIFF_LIQ)."""
         if self._R is None:
             self._R = calculate_avg_vdw_radius(self.atoms)
         return self._R
@@ -395,6 +436,20 @@ class _Fluid(_Thermo):
 
 
 class Electron(_Thermo):
+    """Electrons for electrochemical models.
+
+    Parameters
+    ----------
+    E : float
+        Energy of an electron in eV (e.g. -e times the electrode
+        potential).
+    self_repulsion : float
+        Coefficient in eV of the self-repulsion term,
+        lateral = self_repulsion * symbol.
+    label : str
+        Name of the species.
+    """
+
     def __init__(self, E, self_repulsion, label):
         _Thermo.__init__(self)
         self.atoms = Atoms()
@@ -425,15 +480,62 @@ class Electron(_Thermo):
 
 
 class Gas(_Fluid):
-    """Ideal gas. The reference state of its free energy is the
-    concentration rhoref (in M, default 1 M) or, if pref is given, the
-    pressure pref (in bar; e.g. pref=1 for CatMap's convention, the
-    default under micki.set_conventions('catmap')). Rates do
-    not depend on the reference state, but reported free energies (and
-    barriers clipped with Reaction(..., clip=...)) do."""
+    """Ideal gas: translation (ideal gas), rotation (rigid rotor) and
+    vibrations (harmonic oscillators). Its concentration is in M.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms, ase.db.row.AtomsRow or str
+        Structure with a calculator that provides its potential energy
+        (eV), or a database row, or the path of a VASP OUTCAR or
+        vasprun.xml from a frequency calculation (energy and frequencies
+        are then read from it, see micki.io.parse_vasp_out). The geometry
+        is used for the moments of inertia.
+    label : str
+        Name of the species.
+    freqs : array of float, optional
+        All 3N vibrational frequencies in eV (as from a Hessian), sorted
+        ascending; the lowest 6 (5 for linear molecules) are the
+        translations and rotations and are dropped. Taken from atoms if it
+        is a database row or a VASP file.
+    symm : int
+        Rotational symmetry number.
+    spin : float
+        Total spin S; the electronic degeneracy is 2S + 1.
+    eref : micki.EnergyReference, optional
+        Per-element reference energies subtracted from the potential
+        energy.
+    rhoref : float, optional
+        Reference concentration (M) of the free energy (default 1 M).
+    dE : float
+        Energy shift in eV (see _Thermo).
+    pref : float, optional
+        Reference pressure in bar instead of rhoref; the reference
+        concentration pref / RT then follows the temperature. pref=1 is
+        CatMap's (and ASE's) convention and the default under
+        micki.set_conventions('catmap').
+
+    Rates do not depend on the reference state, but free energies, the
+    computed alpha of reactions with gases, and barriers clipped with
+    Reaction(..., clip=...) do. G = H - TS is the chemical potential at the
+    reference state, including the pV = kT term.
+    """
 
 
 class Liquid(_Fluid):
+    """Solute or solvent molecule in a liquid, with ideal-gas
+    thermochemistry at the reference concentration rhoref (M).
+
+    Parameters are those of Gas (without pref), plus:
+
+    S : float, optional
+        Liquid-phase entropy; stored (and saved to databases) but not used
+        in the thermochemistry.
+    D : float, optional
+        Diffusion coefficient in m^2/s, for the DIFF and DIFF_LIQ rate
+        laws.
+    """
+
     def __init__(self, atoms, label, freqs=None, symm=1,
                  spin=0., eref=None, rhoref=1., S=None, D=None, dE=0.):
         _Fluid.__init__(self, atoms, label, freqs, symm, spin, eref,
@@ -452,6 +554,45 @@ class Liquid(_Fluid):
 
 
 class Adsorbate(_Thermo):
+    """Adsorbate, transition state or empty site: all degrees of freedom
+    are harmonic vibrations (Helmholtz energy).
+
+    Parameters
+    ----------
+    atoms : ase.Atoms, ase.db.row.AtomsRow or str
+        As for Gas. For a bare site (vacancy species) use e.g. the clean
+        slab, or an empty Atoms object with energy 0.
+    label : str
+        Name of the species.
+    freqs : array of float
+        Vibrational frequencies in eV, all of them used (for a transition
+        state, the first, imaginary, mode is dropped). Taken from atoms if
+        it is a database row or a VASP file.
+    ts : bool
+        Whether this is a transition state.
+    spin : float
+        Total spin S.
+    sites : list of Adsorbate
+        The site (vacancy) species the adsorbate occupies, once per site,
+        e.g. [slab] or [slab, slab] for a bidentate species. Vacancy
+        species themselves have no sites. Coverages of each site type add
+        up to 1 (or to the site ratio of the lattice).
+    lattice : micki.Lattice, optional
+        Usually set by the Model (Model.lattice); gives multi-site species
+        their configurational entropy kB ln(orientations / symm).
+    eref : micki.EnergyReference, optional
+        Per-element reference energies subtracted from the potential
+        energy.
+    dE : float
+        Energy shift in eV (see _Thermo).
+    symm : int
+        Symmetry number: divides the number of distinguishable
+        orientations counted by the lattice, e.g. 2 for an end-to-end
+        symmetric bidentate species (Hermes et al. 2019, eqs. 6-7). A symm
+        larger than the orientations counted (e.g. any symm > 1 for a
+        single-site species) only lowers the partition function and warns.
+    """
+
     def __init__(self, atoms, label, freqs=None, ts=None,
                  spin=0., sites=None, lattice=None, eref=None, dE=0.,
                  symm=1):
@@ -511,6 +652,10 @@ class Adsorbate(_Thermo):
 
 
 class _Reactants:
+    """A sum of species, as built with + and * (e.g. 2 * h + o2); one side
+    of a Reaction. Thermodynamic functions are the sums over its species.
+    """
+
     def __init__(self, species):
         self.species = []
         self.elements = {}

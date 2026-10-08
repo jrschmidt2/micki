@@ -10,6 +10,9 @@ def bar_to_molar(p, T):
 
 
 def calculate_avg_vdw_radius(atoms, npoints=8001):
+    """Average van der Waals radius (Angstrom) of a molecule: the mean
+    distance from its center of mass to the surface of its van der Waals
+    spheres, over npoints directions (used by DIFF_LIQ)."""
     if npoints % 2 == 0:
         npoints += 1
 

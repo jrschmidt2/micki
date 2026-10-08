@@ -1,4 +1,4 @@
-"""Lattice stuff"""
+"""Site lattices for configurational entropy and site ratios"""
 
 from .reactants import _Thermo
 import numpy as np
@@ -6,6 +6,24 @@ from ase.units import kB
 
 
 class Lattice:
+    """Lattice of adsorption sites, given as neighbor counts.
+
+    Parameters
+    ----------
+    neighborlist : dict
+        {site: {neighbor site: number of such neighbors}}, with sites the
+        vacancy species (or their labels; see update_site_names), e.g.
+        {slab: {slab: 6}} for a hexagonal lattice of one site type. With
+        several site types, their relative amounts (ratio) follow from the
+        neighbor counts.
+
+    A species occupying several sites gets the configurational entropy
+    kB ln(product of the neighbor counts along its sites, divided by the
+    site ratios), e.g. kB ln 6 for a bidentate species on a hexagonal
+    lattice (Hermes et al., J. Chem. Phys. 151, 014112 (2019), eqs. 6-7).
+    Adsorbate.symm divides this count. Set it with Model.lattice.
+    """
+
     def __init__(self, neighborlist):
         self.neighborlist = neighborlist
         self.sites = [site for site in neighborlist]
@@ -60,6 +78,8 @@ class Lattice:
                              "Eigenvectors: {}".format(eigenvecs))
 
     def update_site_names(self, string_to_thermo):
+        """Replace site labels by species: string_to_thermo maps every
+        label to its vacancy species."""
         if not self.string_names:
             raise RuntimeError('Sites are already _Thermo objects!')
 
@@ -81,6 +101,8 @@ class Lattice:
         self.__init__(new_neighborlist)
 
     def get_S_conf(self, sites):
+        """Configurational entropy (eV/K) of a species occupying sites (a
+        list of vacancy species); 0 for a single site."""
         if sites is None or isinstance(sites, _Thermo) or len(sites) == 1:
             return 0
         nconfs = 1

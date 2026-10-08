@@ -1,3 +1,5 @@
+"""Reading and writing species in ASE databases"""
+
 import warnings
 
 from ase.db import connect
@@ -17,8 +19,11 @@ def get_data(row, param):
                                "".format(row.name, param))
     return row.data[param]
 
-# Converts a single ASE DB row to a Micki Thermo object.
 def row_to_thermo(row):
+    """A species (Adsorbate, Gas or Liquid) from an ASE database row written
+    by save_to_db: its parameters are in row.data ('thermo', 'freqs',
+    'sites', 'ts', 'symm', 'spin', 'dE', 'rhoref', 'pref', 'D', 'S'); sites
+    are still labels (read_from_db resolves them)."""
     name = row.name
     freqs = get_data(row, 'freqs')
     thermo = get_data(row, 'thermo')
@@ -48,8 +53,16 @@ def row_to_thermo(row):
     else:
         raise ValueError('Unknown Thermo type {}!'.format(thermo))
 
-# Creates a dictionary of Thermo objects from a properly-formatted ASE DB file.
 def read_from_db(db, names=None, eref=None):
+    """Read species from an ASE database (a file name or an open
+    connection), as {label: species}.
+
+    names: only return these labels. eref: labels of the species (N
+    structures with N elements) that define the per-element energy
+    reference (micki.EnergyReference) applied to all species, e.g. the
+    clean slab and a set of gases. Rows that cannot be parsed are skipped
+    with a warning.
+    """
     if isinstance(db, str):
         db = connect(db)
     elif not isinstance(db, Database):
