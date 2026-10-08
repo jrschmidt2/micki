@@ -1,6 +1,6 @@
 # Example: water-gas shift on Pt
 
-The water-gas shift reaction, CO + H2O → CO2 + H2, on Pt(111), modeled after
+The water-gas shift reaction, CO + H₂O → CO₂ + H₂, on Pt(111), modeled after
 Hermes et al., J. Chem. Phys. 151, 014112 (2019) and compared with the
 experiments of Grabow et al. (J. Phys. Chem. C 112, 4608 (2008), Table 5) at 21
 reaction conditions. The complete script is
@@ -10,8 +10,8 @@ test. Running it regenerates `tests/data/wgs_reference.json`.
 ## Species
 
 DFT energies (PBE-D3) and frequencies are in an ASE database,
-`tests/data/wgs.json`. Energies are referenced to the clean slab, CO, H2O and
-H2:
+`tests/data/wgs.json`. Energies are referenced to the clean slab, CO, H₂O and
+H₂:
 
 ```python
 sp = read_from_db('tests/data/wgs.json',
@@ -96,14 +96,14 @@ pfr.set_initial_conditions(U_cstr)
 U_pfr, _ = pfr.solve(dt, 1000)                     # dt: residence time
 ```
 
-The turnover frequency follows from the CO2 at the outlet, the flow rate and
+The turnover frequency follows from the CO₂ at the outlet, the flow rate and
 the number of catalytic sites (`NSITES`, from the Pt loading and dispersion).
 
 ## Results
 
-TOF in CO2 per site per minute (micki) against experiment:
+TOF in CO₂ per site per minute (micki) against experiment:
 
-| # | T (K) | p(CO) | p(H2O) | p(CO2) | p(H2) (atm) | micki | experiment |
+| # | T (K) | p(CO) | p(H₂O) | p(CO₂) | p(H₂) (atm) | micki | experiment |
 |---|---|---|---|---|---|---|---|
 | 1 | 523 | 0.154 | 0.208 | 0.000 | 0.000 | 3.36 | 3.68 |
 | 2 | 548 | 0.055 | 0.208 | 0.000 | 0.000 | 8.08 | 8.56 |
@@ -128,8 +128,8 @@ TOF in CO2 per site per minute (micki) against experiment:
 | 21 | 573 | 0.150 | 0.208 | 0.000 | 0.000 | 13.87 | 15.44 |
 
 The root-mean-square error of ln TOF is 0.131. The model reproduces the
-inhibition by H2 (conditions 12–18) and the temperature dependence. It
-overestimates the rates with CO2 in the feed (conditions 8–11) by 20–40%.
+inhibition by H₂ (conditions 12–18) and the temperature dependence. It
+overestimates the rates with CO₂ in the feed (conditions 8–11) by 20–40%.
 
 The same model in CatMap's conventions (`tests/catmap_wgs.py`) is used to
 validate micki against CatMap ([CatMap conventions](../catmap.md)).

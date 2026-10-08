@@ -107,9 +107,9 @@ The test suite compares micki with CatMap 0.3.1 solving the same models
 - **Water-gas shift on Pt** (`tests/catmap_wgs.py`): the published model in
   CatMap's conventions, built under the flag, in two variants (linear
   response with α = 1/2; piecewise-linear response with explicit
-  transition-state interactions), 4 conditions each. CO2 rates and coverages
+  transition-state interactions), 4 conditions each. CO₂ rates and coverages
   agree to ~5e-14.
-- **Ammonia synthesis** (Ru-like, non-activated H2 adsorption, linear
+- **Ammonia synthesis** (Ru-like, non-activated H₂ adsorption, linear
   interactions) and **ethylene hydrogenation** (H on its own site type,
   interactions within and across site types, smooth piecewise-linear
   response) (`tests/catmap_models.py`), 3 conditions each, solved natively by

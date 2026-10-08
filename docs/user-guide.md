@@ -9,7 +9,7 @@ fit together. The theory is derived in Hermes et al., J. Chem. Phys. 151,
 
 ## A complete example
 
-CO oxidation by dissociatively adsorbed O2, at fixed gas pressures, with
+CO oxidation by dissociatively adsorbed O₂, at fixed gas pressures, with
 made-up energies (eV, relative to the gases and the clean surface) and
 frequencies (eV). The species are built directly from ASE `Atoms` objects with
 attached energies; in practice they usually come from DFT output or an ASE
@@ -96,7 +96,7 @@ The electronic energy of a species is the potential energy of its `atoms`
 `eref`, plus an optional shift `dE`:
 
 - **`eref`**: a `micki.EnergyReference` built from N structures containing N
-  elements (for example the clean slab, CO, H2O and H2), which gives every
+  elements (for example the clean slab, CO, H₂O and H₂), which gives every
   element a reference energy so that formation energies are referenced
   consistently. `read_from_db(..., eref=[labels])` sets it for all species read.
 - **`dE`**: a constant shift in eV, for corrections (e.g. to match an

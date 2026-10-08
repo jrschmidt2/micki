@@ -60,9 +60,9 @@ order in CO +1.987, in O2 -0.996
 ```
 
 The surface is nearly covered by O, and CO adsorption onto the few free sites
-controls the rate. The free sites are set by the balance of O2 adsorption
-(on pairs of sites) and O removal, so they scale as p(CO)/p(O2), and the rate
-as p(CO)²/p(O2): orders +2 and −1. Faster O2 adsorption would only poison the
+controls the rate. The free sites are set by the balance of O₂ adsorption
+(on pairs of sites) and O removal, so they scale as p(CO)/p(O₂), and the rate
+as p(CO)²/p(O₂): orders +2 and −1. Faster O₂ adsorption would only poison the
 surface further, hence its negative degree of rate control. The degrees of
 rate control sum to 1.000.
 
