@@ -138,7 +138,8 @@ reactions_from_strings(species, reactions)
 ```
 
 - **`expression`:** `'reactants -> products'` or `'reactants <-> ts ->
-  products'`.
+  products'`. Instead of a transition state, `^0.26` (or CatMap's
+  `^0.26eV_a`) gives the barrier `dG_act0` at ΔG = 0.
   - `->` and `<->` are interchangeable; steps are reversible unless
     `reversible=False`.
   - Terms are labels joined by `+`, with optional integer coefficients (`2 h`,
@@ -158,7 +159,8 @@ The constructor takes the sides as species objects:
 ```python
 Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
          dground=False, reversible=True, clip=..., alpha=...,
-         explicit_ts=False, check_balance=True)
+         explicit_ts=False, check_balance=True, beta=None, U_ref=None,
+         dG_act0=None, dG_reorg=0., prefactor=None)
 ```
 
 | Parameter | Default | Meaning |
@@ -173,7 +175,15 @@ Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
 | `clip` | `None` *(conventions: `'coverage'` for TST, EQUIL, STICK)* | Negative barriers: `None` raises at zero coverage; `'zero_coverage'` (TST) clips once at zero coverage; `'coverage'` (TST, EQUIL, STICK, `dG_act`) uses Max(ΔG‡, ΔG, 0) at the current coverages. |
 | `alpha` | `None` = computed *(conventions: 0.5)* | Weight of the products' coverage terms in the transition-state energy; computed BEP-style if `None`. |
 | `explicit_ts` | `False` | Transition-state energy from the TS species only (with `ts.lateral`). |
+| `beta` | 0.5 for electrochemical steps | Charge-transfer coefficient (symmetry factor) for the step as written: the forward barrier changes by β × the change of ΔG with the potential, the reverse barrier by 1 − β. Also the slope of `dG_act0`. |
+| `U_ref` | `None` | For an electrochemical step with `ts` or `dG_act`: the potential (V vs SHE) at which the barrier was computed (e.g. constant-potential DFT). ΔG‡(U) = ΔG‡(U_ref) + β[ΔG(U) − ΔG(U_ref)]. Required for such steps. |
+| `dG_act0` | `None` | Barrier (eV) where ΔG = 0, instead of a transition state: ΔG‡ = dG_act0 + β·ΔG (e.g. "simple" PCET steps; CatMap's `^0.26eV`). In strings: `'a + h3o + e <-> ^0.26 -> ah + h2o'`. |
+| `dG_reorg` | 0 | Additional barrier (eV), e.g. solvent reorganization: rate constants × exp(−dG_reorg/kT), for any rate law including barrierless ones. |
+| `prefactor` | kT/h | Replaces kT/h (1/s) in the TST and EQUIL rate laws. |
 | `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms and carry the same charge (for the atoms, empty sites, i.e. species listed in a reaction species' `sites`, and electrons are not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
+
+Electrochemical steps (with `Electron` species) default to `clip='coverage'`
+and, with a transition state, `alpha=beta`.
 
 Under the CatMap conventions, transition states also ignore the `dE` of the
 reactants and products (`reaction.ts_follows_dE = False`). An explicit

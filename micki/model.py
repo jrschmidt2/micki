@@ -69,6 +69,7 @@ def _formula(counts):
 
 
 _ARROW = re.compile(r'<->|->')
+_BARRIER = re.compile(r'\^\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*(?:eV)?(?:_\w+)?')
 _COEFFICIENT = re.compile(r'(\d+)(.*)$', re.S)
 
 
@@ -118,6 +119,15 @@ def _parse_side(text, species, expression):
         n, sp = _parse_term(term.strip(), species, expression)
         out += [sp] * n
     return out
+
+
+def _species_of(side):
+    """The species of a reaction side (a species or a sum of species)."""
+    if isinstance(side, _Thermo):
+        return [side]
+    if isinstance(side, _Reactants):
+        return list(side.species)
+    return []
 
 
 def _sum(species):
@@ -195,7 +205,33 @@ class Reaction:
         (no interpolation between reactants and products).
     check_balance : bool
         Raise a ValueError if the reactants, products and transition state
-        do not contain the same atoms, or do not carry the same charge. Empty sites (species that a species
+        do not contain the same atoms, or do not carry the same charge.
+    beta : float
+        Charge-transfer coefficient (symmetry factor) of an electrochemical
+        step (default 0.5), for the step as written: the forward barrier
+        changes by beta times the change of the reaction free energy with
+        the potential, the reverse barrier by 1 - beta. Also the slope of
+        dG_act0.
+    U_ref : float
+        For an electrochemical step with a transition state (or dG_act): the
+        electrode potential (V vs SHE) at which its free energy (barrier)
+        was computed, e.g. by constant-potential DFT. At potential U,
+        dG_act(U) = dG_act(U_ref) + beta (dG(U) - dG(U_ref)).
+    dG_act0 : float
+        Barrier (eV) where the reaction free energy is zero, instead of a
+        transition state: dG_act = dG_act0 + beta dG (e.g. "simple" PCET
+        steps, where dG_act0 is the barrier at the step's equilibrium
+        potential). In reaction strings: 'a + h3o + e <-> ^0.26 -> ah + h2o'.
+    dG_reorg : float
+        Additional barrier (eV), e.g. for solvent reorganization, which
+        computed barriers miss (rate constants times exp(-dG_reorg/kT));
+        added to any rate law, also to barrierless (EQUIL) steps.
+    prefactor : float
+        Replaces kT/h (1/s) in the TST and EQUIL rate laws (e.g. to mirror
+        CatMap models).
+
+    Electrochemical steps (with Electron species, n_electrons != 0) default
+    to clip='coverage' and, with a transition state, alpha=beta. Empty sites (species that a species
         of the reaction lists in its sites) and electrons are not counted,
         and an adsorbate whose structure contains the atoms of its (first)
         site species, e.g. a slab, is counted without them.
@@ -222,17 +258,46 @@ class Reaction:
 
     def __init__(self, reactants, products, ts=None, method=None, S0=1.,
                  dG_act=None, dground=False, reversible=True, clip=DEFAULT,
-                 alpha=DEFAULT, explicit_ts=False, check_balance=True):
+                 alpha=DEFAULT, explicit_ts=False, check_balance=True,
+                 beta=None, U_ref=None, dG_act0=None, dG_reorg=0.,
+                 prefactor=None):
         self.conventions = get_conventions()
         catmap = self.conventions == 'catmap'
+        n_electrons = (sum(isinstance(sp, Electron)
+                           for sp in _species_of(reactants))
+                       - sum(isinstance(sp, Electron)
+                             for sp in _species_of(products)))
+        electrochemical = n_electrons != 0
+        if beta is None and electrochemical:
+            beta = 0.5
+        if beta is not None and not 0. <= beta <= 1.:
+            raise ValueError('beta must be between 0 and 1')
+        if dG_act0 is not None:
+            if ts is not None or dG_act is not None:
+                raise ValueError('Give dG_act0, dG_act or ts, not several')
+            if beta is None:
+                raise ValueError('dG_act0 (barrier at dG = 0) needs beta')
+        if electrochemical and (ts is not None or dG_act is not None) \
+                and U_ref is None:
+            raise ValueError('An electrochemical step with a transition '
+                             'state or dG_act needs U_ref, the potential '
+                             '(V vs SHE) at which its barrier was computed')
+        if U_ref is not None and not electrochemical:
+            raise ValueError('U_ref is for electrochemical steps')
         if clip is DEFAULT:
             clip_default = True
-            clip = 'coverage' if catmap else None
+            clip = 'coverage' if catmap or electrochemical else None
         else:
             clip_default = False
         if alpha is DEFAULT:
-            alpha = 0.5 if catmap and ts is not None and not explicit_ts \
-                else None
+            if ts is None or explicit_ts:
+                alpha = None
+            elif catmap:
+                alpha = 0.5
+            elif electrochemical:
+                alpha = beta
+            else:
+                alpha = None
         if dground:
             raise ValueError("dground has been replaced by "
                              "clip='zero_coverage'")
@@ -336,7 +401,8 @@ class Reaction:
 
         self.method = method
         if self.method is None:
-            if self.ts is not None:
+            if self.ts is not None or dG_act is not None \
+                    or dG_act0 is not None:
                 self.method = 'TST'
             else:
                 self.method = 'EQUIL'
@@ -353,9 +419,15 @@ class Reaction:
         self.L = None
         self.U = 0.  # electrode potential vs SHE (V), set by the Model
         # electrons consumed as written (positive for a reduction)
-        self.n_electrons = (
-            sum(isinstance(sp, Electron) for sp in self.reactants)
-            - sum(isinstance(sp, Electron) for sp in self.products))
+        self.n_electrons = n_electrons
+        self.beta = beta
+        self.U_ref = U_ref
+        self.dG_act0 = dG_act0
+        self.dG_reorg = dG_reorg
+        self.prefactor = prefactor
+        if prefactor is not None and self.method not in ('TST', 'EQUIL'):
+            raise ValueError('prefactor replaces kT/h of the TST and EQUIL '
+                             'rate laws')
         self.scale_params = ['dH_act', 'dS_act', 'kfor', 'krev']
         self.alpha = None
         self.reversible = reversible
@@ -368,6 +440,7 @@ class Reaction:
 
         # If the user supplied a TS, this should be None.
         self.dG_act = dG_act
+        self.dG_act_given = dG_act
 
         # If all reactants are Liquid species, then this reaction can occur
         # at any point of the diffusion grid, not just near the catalyst
@@ -421,6 +494,8 @@ class Reaction:
         expression: 'reactants -> products' or, with a transition state,
         'reactants <-> ts -> products' (CatMap's form; '->' and '<->' are
         interchangeable and both mean a reversible step, see reversible).
+        Instead of a transition state, '^0.26' (or CatMap's '^0.26eV_a')
+        gives the barrier dG_act0 at dG = 0.
         Terms are species labels separated by '+', each optionally
         preceded by an integer coefficient ('2 h', '2*h' or '2h'; a term
         that is itself a label is taken as the label). Empty-site species
@@ -435,8 +510,19 @@ class Reaction:
         """
         if not isinstance(species, Mapping):
             species = {s.label: s for s in species}
-        states = [_parse_side(text, species, expression)
-                  for text in _ARROW.split(expression)]
+        parts = _ARROW.split(expression)
+        if len(parts) == 3 and parts[1].strip().startswith('^'):
+            # '^0.26' or CatMap's '^0.26eV_a': barrier at dG = 0 (dG_act0)
+            match = _BARRIER.fullmatch(parts[1].strip())
+            if match is None:
+                raise ValueError('Cannot read the barrier {!r} in {!r}'
+                                 ''.format(parts[1].strip(), expression))
+            if 'dG_act0' in kwargs:
+                raise ValueError('Barrier given twice for {!r}'.format(
+                    expression))
+            kwargs['dG_act0'] = float(match.group(1))
+            parts = [parts[0], parts[2]]
+        states = [_parse_side(text, species, expression) for text in parts]
         if len(states) not in (2, 3):
             raise ValueError("Write 'reactants -> products' or 'reactants "
                              "<-> ts -> products', not {!r}".format(
@@ -525,7 +611,14 @@ class Reaction:
             for species in self.ts:
                 species.update(T=T, force=True)
 
-            Gts = self.ts.get_G(T)
+            # electrochemical step: the transition state's free energy at the
+            # electrode potential U from that at U_ref, so that
+            # dG_act(U) = dG_act(U_ref) + beta (dG(U) - dG(U_ref))
+            ts_shift = 0.
+            if self.n_electrons:
+                ts_shift = (-(1 - self.beta) * self.n_electrons
+                            * (self.U - self.U_ref))
+            Gts = self.ts.get_G(T) + ts_shift
             Gr = self.reactants.get_G(T)
             Gp = self.products.get_G(T)
 
@@ -578,6 +671,7 @@ class Reaction:
 
             self.dH_act = self.ts.get_H(T) + shift - self.reactants.get_H(T)
             self.dH_act *= self.scale['dH_act']
+            self.dH_act += ts_shift
             self.dS_act = self.ts.get_S(T) - self.reactants.get_S(T)
             self.dS_act *= self.scale['dS_act']
             self.dG_act = self.dH_act - self.T * self.dS_act
@@ -598,6 +692,16 @@ class Reaction:
                                   'Rounding to {}'.format(self, self.dG),
                                   RuntimeWarning, stacklevel=2)
                     self.dG_act = self.dG
+        elif self.dG_act0 is not None:
+            # barrier dG_act0 where dG = 0, changing with beta dG (e.g.
+            # "simple" PCET steps; CatMap's G_TS = G_FS + barrier
+            # + (1 - beta)(-dG))
+            self.dG_act = self.dG_act0 + self.beta * self.dG
+        elif self.dG_act_given is not None:
+            self.dG_act = self.dG_act_given
+            if self.n_electrons:
+                self.dG_act += (self.beta * self.n_electrons
+                                * (self.U - self.U_ref))
         self._calc_keq()
         self._calc_kfor()
         self._calc_krev()
@@ -654,10 +758,12 @@ class Reaction:
         elif self.dG_act is not None:
             barr *= sym.exp(-self.dG_act / (kB * self.T)) \
                     / self.reactants.get_reference_state()
+        prefactor = (_k * self.T / _hplanck if self.prefactor is None
+                     else self.prefactor)
         if self.method == 'EQUIL' and self.clip == 'coverage':
-            self.kfor = _k * self.T * barr / _hplanck * self.scale['kfor']
+            self.kfor = prefactor * barr * self.scale['kfor']
         elif self.method == 'EQUIL':
-            self.kfor = _k * self.T * barr / _hplanck * self.scale['kfor']
+            self.kfor = prefactor * barr * self.scale['kfor']
             if isinstance(self.keq, sym.Basic):
                 subs = {}
                 for atom in self.keq.atoms(sym.Symbol):
@@ -755,10 +861,13 @@ class Reaction:
             self.kfor *= self.scale['kfor']
         elif self.method == 'TST':
             # Transition State Theory
-            self.kfor = (_k * self.T / _hplanck) * barr * self.scale['kfor']
+            self.kfor = prefactor * barr * self.scale['kfor']
         else:
             raise ValueError("Method {} is not recognized!".format(
                 self.method))
+        if self.dG_reorg:
+            # e.g. solvent reorganization, not in the computed barrier
+            self.kfor *= np.exp(-self.dG_reorg / (kB * self.T))
 
     def _calc_krev(self):
         self.krev = self.kfor / self.keq
