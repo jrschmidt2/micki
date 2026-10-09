@@ -15,7 +15,7 @@ Packaged with `pyproject.toml` (setuptools): `pip install -e .` in a Python ≥3
 
 ## Documentation
 
-User documentation is Markdown in `docs/`, rendered by GitHub (no build): `index.md` (overview, units, citation), `user-guide.md`, `reference.md` (every class, parameter and option; keep it complete when adding options), `analysis.md`, `catmap.md`, `examples/wgs.md`. Theory is cited (Hermes et al., J. Chem. Phys. 151, 014112 (2019); the AIP-copyrighted paper text and figures are not copied). The README links the docs with absolute GitHub URLs (the PyPI page shows the README). Public classes have NumPy-style docstrings. `examples/wgs.py` is a standalone, runnable version of the WGS model written with reaction strings (`tests/test_examples.py` checks it builds the same model as `tests/wgs.py` and reproduces two reference TOFs). `tests/test_docs.py` runs the first code block of `user-guide.md` and of `analysis.md` and compares their printed output with the documented output block, so update both when results change.
+User documentation is Markdown in `docs/`, rendered by GitHub (no build): `index.md` (overview, units, citation), `user-guide.md`, `reference.md` (every class, parameter and option; keep it complete when adding options), `analysis.md`, `electrochemistry.md`, `catmap.md`, `examples/wgs.md`. Theory is cited (Hermes et al., J. Chem. Phys. 151, 014112 (2019); the AIP-copyrighted paper text and figures are not copied). The README links the docs with absolute GitHub URLs (the PyPI page shows the README). Public classes have NumPy-style docstrings. `examples/wgs.py` is a standalone, runnable version of the WGS model written with reaction strings (`tests/test_examples.py` checks it builds the same model as `tests/wgs.py` and reproduces two reference TOFs). `tests/test_docs.py` runs the first code block of `user-guide.md`, `analysis.md` and `electrochemistry.md` and compares their printed output with the documented output block, so update both when results change.
 
 ## Tests
 
@@ -59,6 +59,16 @@ Consequences to keep in mind:
 - The integration path stops when max |dy/dt| < epsilon, with dy/dt taken from IDA's y′. Do not re-evaluate dy/dt from the rate expressions for this: near-equilibrium steps with fluxes ~1e8 give ~1e-8–1e-7 rounding noise, which made the old check (and the Fortran versions) run to `maxiter` at random.
 - `check_rates()` (run after every solve) evaluates coverage-dependent rate constants through cached `lambdify` functions; sympy `subs()` there used to dominate `find_steady_state`.
 - If any rate expression (e.g. via `species.lateral`) refers to a species that is not in the model, `set_initial_conditions` raises `ValueError` naming the species and reactions; such symbols used to be silently set to 0.
+
+**Electrochemistry** (`docs/electrochemistry.md`). Explicit species only; there is no CHE mode by design: CHE puts the pH dependence of rates through β, and the user wants correct mass-action kinetics.
+- **Electrons:** `Electron('e')` has G = −eU + dE with U = `Model.U_SHE` (pushed to electrons through `Reaction.update(..., U=)`), charge −1, and is never a variable. The name `Model.U` is taken by the solver states. `U_RHE` is read-only; `set_potential(U, scale)` sets either scale; `Model.pH` is only for that conversion.
+- **Charge:** `Reaction.n_electrons` counts electrons as written; all species have `charge`, and reactions check charge balance.
+- **Barriers:** `Reaction(beta, U_ref, dG_act0, dG_reorg, prefactor)`, with `'^0.26'` in strings for `dG_act0`. A transition state at `U_ref` is shifted by −(1−β)·n·(U − U_ref); `dG_act0` gives ΔG‡ = dG_act0 + β·ΔG. Electrochemical steps default to `clip='coverage'` and `alpha=β`.
+- **Transport:** `method='FILM'` (bulk → near-surface copy, k = 1000·D·N_A·Asite/(roughness·δ)); `Model(roughness, delta)`. `Reaction.per_site` makes film steps scale with `rhocat`.
+- **Outputs:** `Model.current` / `partial_currents` / `selectivity` / `sweep` / `tafel_slope`. `ModelAnalysis` accepts `'current'` or a callable.
+- **`micki.electrochem`:** `Electrolyte` (SHE-scale energies from pKw/pKa; concentrations at a pH), `levich_delta`, `film_rhocat`, `tafel_slope`.
+- **Given energies:** `E=`/`S=` give T-independent energies for any species (+kT only for `Gas`); `Solute` is a `Liquid` with given E.
+- **Tests:** `tests/test_electrochem.py`, plus the CatMap ORR/HER comparison.
 
 **Supporting modules**
 - `analysis.py: ModelAnalysis` — steady-state analysis: Campbell degree of rate control, thermodynamic rate control, apparent activation barrier, reaction orders (finite differences on `scale`/T/concentrations).

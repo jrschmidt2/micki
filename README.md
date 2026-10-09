@@ -34,6 +34,7 @@ See the [documentation](https://github.com/jrschmidt2/micki/blob/master/docs/ind
 a [user guide](https://github.com/jrschmidt2/micki/blob/master/docs/user-guide.md),
 a complete [reference](https://github.com/jrschmidt2/micki/blob/master/docs/reference.md)
 of all classes and options, [sensitivity analysis](https://github.com/jrschmidt2/micki/blob/master/docs/analysis.md),
+[electrochemistry](https://github.com/jrschmidt2/micki/blob/master/docs/electrochemistry.md),
 [CatMap conventions](https://github.com/jrschmidt2/micki/blob/master/docs/catmap.md)
 and a [water-gas shift example](https://github.com/jrschmidt2/micki/blob/master/docs/examples/wgs.md)
 (script: [examples/wgs.py](https://github.com/jrschmidt2/micki/blob/master/examples/wgs.py)).
@@ -83,7 +84,8 @@ python -m unittest discover -s tests -v
 conventions (gas reference state, barrier clipping, transition-state
 interactions, masses), and individual options are available too. Tests
 compare Micki with CatMap's own solutions of several models (agreement
-~1e-13). See [CatMap conventions](https://github.com/jrschmidt2/micki/blob/master/docs/catmap.md).
+~1e-13). See [electrochemistry](https://github.com/jrschmidt2/micki/blob/master/docs/electrochemistry.md),
+[CatMap conventions](https://github.com/jrschmidt2/micki/blob/master/docs/catmap.md).
 
 ### Releasing:
 Releases are published to PyPI automatically by GitHub Actions

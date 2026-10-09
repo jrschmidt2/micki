@@ -129,7 +129,8 @@ The sections below go through each step.
 | `Gas` | ideal-gas translation, rigid rotor, harmonic vibrations | concentration (M) |
 | `Liquid` | as `Gas`, at a reference concentration; diffusion coefficient for diffusion rate laws | concentration (M) |
 | `Adsorbate` | harmonic vibrations only (adsorbates, transition states, empty sites) | coverage |
-| `Electron` | energy only (electrochemistry) | — |
+| `Solute` | given free energy (ions, dissolved molecules, solvent) | concentration (M) |
+| `Electron` | G = −e·U at the electrode potential ([electrochemistry](electrochemistry.md)) | — |
 
 ### Energies
 

@@ -37,6 +37,8 @@ t, U, r = model.find_steady_state()   # coverages U, rates r
 - [Reference](reference.md): every class, function, parameter and option.
 - [Sensitivity analysis](analysis.md): degrees of rate control, apparent
   activation energies, reaction orders.
+- [Electrochemistry](electrochemistry.md): electron-transfer steps at a
+  fixed electrode potential, proton donors, mass transport, currents.
 - [CatMap conventions](catmap.md): reproducing CatMap models, and how micki and
   CatMap compare.
 - [Example: water-gas shift on Pt](examples/wgs.md): a published model with
@@ -74,6 +76,8 @@ number divides the number of orientations.
 | Adsorbate coverages | fraction of the sites of their type |
 | Rates | per site per second |
 | Time | s |
+| Electrode potential | V vs SHE (`Model.U_SHE`); `U_RHE` derived from `pH` |
+| Current density | mA/cm² per geometric area (cathodic negative) |
 | Site area `Asite` | m² |
 | Diffusion length `z` | m; diffusion coefficients in m²/s |
 

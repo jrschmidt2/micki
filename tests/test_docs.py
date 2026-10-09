@@ -40,6 +40,14 @@ class DocsTest(unittest.TestCase):
                 exec(code, namespace)
             self.assertEqual(out.getvalue(), expected, page)
 
+    def test_electrochemistry_example(self):
+        code, expected = code_and_output('electrochemistry.md')
+        out = io.StringIO()
+        with warnings.catch_warnings(), contextlib.redirect_stdout(out):
+            warnings.simplefilter('ignore')
+            exec(code, {})
+        self.assertEqual(out.getvalue(), expected)
+
 
 if __name__ == '__main__':
     unittest.main()
