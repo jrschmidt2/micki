@@ -86,6 +86,7 @@ number divides the number of orientations.
 | `micki.analysis` | `ModelAnalysis` |
 | `micki.lattice` | `Lattice` |
 | `micki.lateral` | `first_order` (CatMap-style lateral interactions) |
+| `micki.electrochem` | `Electrolyte` (solution species and concentrations) |
 | `micki.conventions` | `set_conventions`, `conventions` |
 | `micki.eref` | `EnergyReference` |
 | `micki.db` | `read_from_db` (and `save_to_db` on species) |

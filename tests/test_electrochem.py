@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from micki import (Adsorbate, Electron, Gas, Liquid, Lattice,  # noqa: E402
                    Model, Reaction, Solute, reactions_from_strings)
 from micki.db import read_from_db  # noqa: E402
+from micki.electrochem import Electrolyte  # noqa: E402
 
 T = 298.15
 NERNST = kB * T * np.log(10.)  # V per pH unit (0.05916 V at 298.15 K)
@@ -328,6 +329,85 @@ class BarrierTest(unittest.TestCase):
         self.assertIsNone(thermal.clip)
         rxn = Reaction.from_string('a + h3o + e -> ah + h2o', sp, clip=None)
         self.assertIsNone(rxn.clip)
+
+
+class ElectrolyteTest(unittest.TestCase):
+
+    def setUp(self):
+        warnings.simplefilter('ignore')
+        self.el = Electrolyte(G_H2=-0.3, G_H2O=0.1, acids={'hoac': {
+            'base': 'oac', 'pKa': 4.76, 'formula': 'C2H4O2',
+            'base_formula': 'C2H3O2', 'G': -2.0}})
+        self.sp = self.el.species()
+        slab = Adsorbate(Atoms(), 'slab', E=0.)
+        self.sp.update({'slab': slab,
+                        'a': Adsorbate(Atoms('O'), 'a', E=-0.5, sites=[slab]),
+                        'ah': Adsorbate(Atoms('OH'), 'ah', E=-0.9,
+                                        sites=[slab])})
+
+    def _keq(self, expression, U=0.):
+        rxn = Reaction.from_string(expression, self.sp)
+        rxn.update(T=T, Asite=1e-19, L=0, U=U)
+        return float(rxn.keq), rxn
+
+    def test_reference_and_equilibria(self):
+        sp = self.sp
+        # SHE: G(H3O+) + G(e-, 0 V) = 1/2 G(H2) + G(H2O)
+        self.assertAlmostEqual(sp['h3o_aq'].get_G(T) + sp['e'].get_G(T),
+                               0.5 * -0.3 + 0.1, places=14)
+        # [H3O+][OH-] = Kw and [H3O+][A-]/[HA] = Ka, with water at 55.5 M
+        keq, _ = self._keq('2 h2o_l -> h3o_aq + oh_aq')
+        self.assertAlmostEqual(np.log10(keq * 55.5**2), -14., places=10)
+        keq, _ = self._keq('hoac + h2o_l -> h3o_aq + oac')
+        self.assertAlmostEqual(np.log10(keq * 55.5), -4.76, places=10)
+        c = self.el.concentrations(5.0, totals={'hoac': 0.1})
+        self.assertAlmostEqual(c['h3o_aq'] * c['oac'] / c['hoac'],
+                               10. ** -4.76, places=14)
+        self.assertAlmostEqual(c['hoac'] + c['oac'], 0.1, places=14)
+        self.assertAlmostEqual(c['h3o_aq'] * c['oh_aq'], 1e-14, places=24)
+        self.assertEqual(c['h2o_l'], 55.5)
+
+    def test_donors_are_consistent(self):
+        # the three proton-transfer channels give the same equilibrium
+        # theta_AH / theta_A at any pH and potential
+        channels = ['a + h3o_aq + e -> ah + h2o_l',
+                    'a + h2o_l + e -> ah + oh_aq',
+                    'a + hoac + e -> ah + oac']
+        for pH, U in ((3., 0.1), (5., -0.2), (9., -0.4)):
+            c = self.el.concentrations(pH, totals={'hoac': 0.1})
+            ratios = []
+            for expression in channels:
+                keq, rxn = self._keq(expression, U=U)
+                q = keq
+                for species in rxn.reactants:
+                    if species.label in c:
+                        q *= c[species.label]
+                for species in rxn.products:
+                    if species.label in c:
+                        q /= c[species.label]
+                ratios.append(q)
+            np.testing.assert_allclose(ratios, ratios[0], rtol=1e-10)
+
+    def test_ph_dependence_of_donor_channels(self):
+        # forward rates at fixed U_RHE: the H3O+ channel changes by
+        # 10^(beta - 1) per pH unit, the H2O channel by 10^beta
+        beta, U_RHE = 0.4, 0.2
+        rates = {}
+        for pH in (1., 2.):
+            U = U_RHE - NERNST * pH
+            c = self.el.concentrations(pH)
+            for donor, expression in (
+                    ('h3o_aq', 'a + h3o_aq + e <-> ^0.5 -> ah + h2o_l'),
+                    ('h2o_l', 'a + h2o_l + e <-> ^0.9 -> ah + oh_aq')):
+                rxn = Reaction.from_string(expression, self.sp, beta=beta)
+                rxn.update(T=T, Asite=1e-19, L=0, U=U)
+                rates[donor, pH] = float(rxn.kfor) * c[donor]
+        self.assertAlmostEqual(np.log10(rates['h3o_aq', 2.]
+                                        / rates['h3o_aq', 1.]),
+                               beta - 1, places=8)
+        self.assertAlmostEqual(np.log10(rates['h2o_l', 2.]
+                                        / rates['h2o_l', 1.]),
+                               beta, places=8)
 
 
 if __name__ == '__main__':

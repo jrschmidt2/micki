@@ -11,7 +11,7 @@ in the [overview](index.md#units). Defaults marked *(conventions)* change under
 - [Lattice](#lattice)
 - [Lateral interactions: first_order](#microkilateralfirst_order)
 - [Conventions](#microkiconventions)
-- [EnergyReference](#energyreference), [databases](#microkidb), [VASP output](#microkioparse_vasp_out), [utilities](#microkiutils)
+- [Electrolyte](#mickielectrochem), [EnergyReference](#energyreference), [databases](#microkidb), [VASP output](#microkioparse_vasp_out), [utilities](#microkiutils)
 
 ## Species
 
@@ -308,6 +308,27 @@ Sets `i.lateral = Σ_j F(θ_tot(j)) · eps[i][j] · θ_j` for every species `i` 
 | `set_conventions(name)` | `'micki'` (default) or `'catmap'` for the rest of the program (context). |
 | `conventions(name)` | Context manager: `with micki.conventions('catmap'): ...` |
 | `get_conventions()` | Current setting. |
+
+## micki.electrochem
+
+```python
+Electrolyte(G_H2=0., G_H2O=0., pKw=14., acids=None, T=298.15, labels=None)
+```
+
+Solution species of an aqueous electrolyte, on the SHE scale.
+
+| Parameter | Meaning |
+|---|---|
+| `G_H2`, `G_H2O` | Free energies (eV) of H₂(g) at 1 bar and liquid water, in the model's energy reference. |
+| `pKw` | Ion product of water. |
+| `acids` | Weak acids: `{label: {'base': base label, 'pKa': pKa, 'formula': ..., 'base_formula': ..., 'G': free energy of the acid (default 0), 'charge': charge of the acid (default 0)}}`. |
+| `T` | Temperature at which pKa and pKw apply. |
+| `labels` | Labels of hydronium, water, hydroxide and the electron; defaults `'h3o_aq'`, `'h2o_l'`, `'oh_aq'`, `'e'`. |
+
+| Method | Returns |
+|---|---|
+| `species()` | `{label: species}`: H₃O⁺, water (`rhoref` 55.5 M, activity 1), OH⁻, the acids and their conjugate bases (`Solute`s), and an `Electron`. G(H₃O⁺, 1 M) + G(e⁻, 0 V) = ½G(H₂) + G(H₂O); OH⁻ from pKw; A⁻ from pKa (HA + H₂O ⇌ H₃O⁺ + A⁻, ΔG = kT ln10·pKa). |
+| `concentrations(pH, totals=None)` | `{label: M}` at the pH: [H₃O⁺] = 10^−pH, [OH⁻] = K_w/[H₃O⁺], water 55.5 M, and each acid in `totals` split by Henderson–Hasselbalch. For the initial conditions (fixed species). |
 
 ## EnergyReference
 
