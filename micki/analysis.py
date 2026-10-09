@@ -62,19 +62,14 @@ class ModelAnalysis:
         for species in self.species_symbols:
             subs[species.symbol] = self.U[species.label]
 
-        kmid = reaction.get_kfor(self.model.T,
-                                 self.model.Asite,
-                                 self.model.z)
+        kmid = reaction.get_kfor(**self.model._conditions())
 
         if isinstance(kmid, sym.Basic):
             kmid = kmid.subs(subs)
 
         reaction.set_scale('kfor', 1.0 - scale)
         reaction.set_scale('krev', 1.0 - scale)
-        reaction.update(self.model.T,
-                        self.model.Asite,
-                        self.model.z,
-                        force=True)
+        reaction.update(force=True, **self.model._conditions())
         klow = reaction.get_kfor()
         model = self.model.copy()
 
@@ -94,10 +89,7 @@ class ModelAnalysis:
 
         reaction.set_scale('kfor', 1.0 + scale)
         reaction.set_scale('krev', 1.0 + scale)
-        reaction.update(self.model.T,
-                        self.model.Asite,
-                        self.model.z,
-                        force=True)
+        reaction.update(force=True, **self.model._conditions())
         khigh = reaction.get_kfor()
         model = self.model.copy()
 
@@ -142,10 +134,7 @@ class ModelAnalysis:
             sp.dE -= dg
 
         for reaction in self.model._reactions:
-            reaction.update(T=self.model.T,
-                            Asite=self.model.Asite,
-                            L=self.model.z,
-                            force=True)
+            reaction.update(force=True, **self.model._conditions())
 
         model = self.model.copy(initialize=False)
         model.set_initial_conditions(self.U)
@@ -163,10 +152,7 @@ class ModelAnalysis:
             sp.dE += dg
 
         for reaction in self.model._reactions:
-            reaction.update(T=self.model.T,
-                            Asite=self.model.Asite,
-                            L=self.model.z,
-                            force=True)
+            reaction.update(force=True, **self.model._conditions())
 
         model = self.model.copy(initialize=False)
         model.set_initial_conditions(self.U)
@@ -178,10 +164,7 @@ class ModelAnalysis:
                 sp.dE -= dg
 
         for reaction in self.model._reactions:
-            reaction.update(T=self.model.T,
-                            Asite=self.model.Asite,
-                            L=self.model.z,
-                            force=True)
+            reaction.update(force=True, **self.model._conditions())
 
         model.finalize()
         rhigh = r2[self.reaction_name]
@@ -282,10 +265,7 @@ class ModelAnalysis:
                 set_dg(adsorbate, i * dg)
 
             for reaction in self.model._reactions:
-                reaction.update(T=self.model.T,
-                                Asite=self.model.Asite,
-                                L=self.model.z,
-                                force=True)
+                reaction.update(force=True, **self.model._conditions())
 
             for j in [-1, 1]:
                 U0 = self.Uequil.copy()
@@ -301,10 +281,7 @@ class ModelAnalysis:
                 set_dg(adsorbate, -i * dg)
 
         for reaction in self.model._reactions:
-            reaction.update(T=self.model.T,
-                            Asite=self.model.Asite,
-                            L=self.model.z,
-                            force=True)
+            reaction.update(force=True, **self.model._conditions())
 
         # the four rates are 2 * dg and 2 * drho apart
         return (rhomid / rmid) * dr / (4 * dg * drho)

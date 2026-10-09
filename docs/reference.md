@@ -103,11 +103,14 @@ Adsorbate(atoms, label, freqs=None, ts=None, spin=0., sites=None,
 ### Electron
 
 ```python
-Electron(E, self_repulsion, label)
+Electron(label='e', dE=0.)
 ```
 
-`E`: energy of an electron (eV); `self_repulsion`: coefficient (eV) of
-`lateral = self_repulsion * symbol`; `label`: name.
+An electron at the electrode, for electrochemical steps: G = −e·U + dE, with U
+the model's electrode potential (`Model.U_SHE`, V vs SHE). It has charge −1 and no
+atoms. It has no concentration either: it does not enter rate laws as a
+concentration and is not a variable. A reaction's `n_electrons` counts the
+electrons it consumes.
 
 ### Common attributes and methods of species
 
@@ -182,6 +185,7 @@ reactants and products (`reaction.ts_follows_dE = False`). An explicit
 | `dG`, `dH`, `dS` | Reaction free energy, enthalpy, entropy (reference states of the species). |
 | `dG_act`, `dH_act`, `dS_act` | Activation free energy, enthalpy, entropy. |
 | `alpha` | α in use. |
+| `n_electrons` | Electrons consumed as written (`Electron` species among the reactants minus among the products; positive for a reduction, 0 for a thermal step). |
 | `method`, `clip`, `alpha_fixed`, `explicit_ts`, `ts_follows_dE`, `conventions` | Settings. |
 | `scale`, `get_scale(p)`, `set_scale(p, x)` | Multipliers of `'dH_act'`, `'dS_act'`, `'kfor'`, `'krev'`. |
 | `update(T, Asite, L, force=False)` | Recompute (called by `Model`). |
@@ -191,7 +195,7 @@ reactants and products (`reaction.ts_follows_dE = False`). An explicit
 
 ```python
 Model(T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
-      analytic_jac=False)
+      analytic_jac=False, U_SHE=0., pH=None)
 ```
 
 | Parameter | Default | Meaning |
@@ -203,9 +207,14 @@ Model(T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
 | `reactor` | `'CSTR'` | `'CSTR'` (all variables differential) or `'PFR'` (adsorbates algebraic). |
 | `rhocat` | 1 | Site concentration (mol/L) converting per-site rates into fluid concentration changes. |
 | `analytic_jac` | `False` | Exact (complex-step) Jacobian for IDA instead of difference quotients. |
+| `U_SHE` | 0 | Electrode potential (V vs SHE), the potential of the `Electron` species. |
+| `pH` | `None` | pH, used only to convert between the SHE and RHE scales; set the concentrations of H₃O⁺ and other species in the initial conditions. |
 
-`T`, `Asite`, `z` and `lattice` are properties; setting them rebuilds an
-initialized model.
+`T`, `Asite`, `z`, `lattice` and `U_SHE` are properties; setting them
+rebuilds an initialized model. `U_RHE` (V vs RHE, U_SHE + (kT ln 10/e)·pH) is
+read-only.
+`set_potential(U, scale='SHE')` sets the potential on the `'SHE'` or `'RHE'`
+scale.
 
 | Method | Meaning |
 |---|---|

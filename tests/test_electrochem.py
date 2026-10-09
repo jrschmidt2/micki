@@ -18,8 +18,28 @@ from ase.units import kB
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from micki import Adsorbate, Gas, Liquid, Lattice, Reaction, Solute  # noqa: E402
+from micki import (Adsorbate, Electron, Gas, Liquid, Lattice,  # noqa: E402
+                   Model, Reaction, Solute, reactions_from_strings)
 from micki.db import read_from_db  # noqa: E402
+
+T = 298.15
+NERNST = kB * T * np.log(10.)  # V per pH unit (0.05916 V at 298.15 K)
+
+
+def redox_model(U=0., pH=0., reaction='a + h3o + e -> ah + h2o', **kw):
+    """A* + H3O+ + e- <-> AH* + H2O, with dG = -0.4 eV + e U (U vs SHE)
+    at 1 M H3O+ and pure water."""
+    slab = Adsorbate(Atoms(), 'slab', E=0.)
+    species = [slab, Electron('e'),
+               Adsorbate(Atoms('O'), 'a', E=-0.5, sites=[slab]),
+               Adsorbate(Atoms('OH'), 'ah', E=-0.9, sites=[slab]),
+               Solute('h3o', 0., 'H3O', charge=1),
+               Solute('h2o', 0., 'H2O', rhoref=55.5)]
+    model = Model(T, Asite=1e-19, U_SHE=U, pH=pH)
+    model.add_reactions(reactions_from_strings(species, {'r': (reaction, kw)}))
+    model.set_fixed(['h3o', 'h2o'])
+    model.set_initial_conditions({'h3o': 10.**-pH, 'h2o': 55.5, 'a': 0.5})
+    return model
 
 
 class GivenEnergyTest(unittest.TestCase):
@@ -126,6 +146,59 @@ class ChargeBalanceTest(unittest.TestCase):
                        sites=[self.slab])
         with self.assertRaisesRegex(ValueError, 'transition state'):
             Reaction(self.h3o, self.h3o, ts=ts)
+
+
+class PotentialTest(unittest.TestCase):
+
+    def setUp(self):
+        warnings.simplefilter('ignore')
+
+    def test_electron(self):
+        e = Electron('e', dE=0.05)
+        e.U = 0.3
+        self.assertAlmostEqual(e.get_G(T), -0.25, places=14)
+        self.assertEqual(e.charge, -1)
+        self.assertEqual(e.copy('e2').get_G(T), e.get_G(T))
+
+    def test_electron_is_not_a_variable(self):
+        model = redox_model()
+        self.assertNotIn('e', model._variable_labels)
+        rate = model.rates[0]
+        self.assertNotIn('e', {str(x) for x in rate.free_symbols})
+        self.assertEqual(model.reactions['r'].n_electrons, 1)
+
+    def test_nernst(self):
+        # theta_AH / theta_A = exp(-(dG(U) - kT ln[H3O+]) / kT): the
+        # half-reduction potential shifts by -59.16 mV per pH unit (vs SHE)
+        # and is independent of pH vs RHE
+        for pH in (0., 1., 3.):
+            for U in (0.25, 0.4, 0.55):
+                model = redox_model(U=U - NERNST * pH, pH=pH)
+                _, cov, _ = model.find_steady_state()
+                ratio = cov['ah'] / cov['a']
+                expected = np.exp((0.4 - U) / (kB * T))
+                self.assertAlmostEqual(ratio / expected, 1., places=8,
+                                       msg='pH {}, U_RHE {}'.format(pH, U))
+                self.assertAlmostEqual(model.U_RHE, U, places=12)
+
+    def test_potential_properties(self):
+        model = redox_model(U=0.1, pH=2.)
+        with self.assertRaises(AttributeError):
+            model.U_RHE = 0.3
+        model.set_potential(0.5, scale='RHE')
+        self.assertAlmostEqual(model.U_SHE, 0.5 - 2 * NERNST, places=14)
+        model.set_potential(0.2)
+        self.assertEqual(model.U_SHE, 0.2)
+        with self.assertRaises(ValueError):
+            model.set_potential(0.2, scale='RHE x')
+        with self.assertRaisesRegex(ValueError, 'pH'):
+            Model(T, 1e-19).U_RHE
+        # changing U rebuilds: same steady state as a model built at that U
+        model.U_SHE = 0.35
+        _, cov, r = model.find_steady_state()
+        _, cov_new, r_new = redox_model(U=0.35, pH=2.).find_steady_state()
+        self.assertAlmostEqual(cov['ah'] / cov_new['ah'], 1., places=10)
+        self.assertEqual(model.copy().U_SHE, 0.35)
 
 
 if __name__ == '__main__':

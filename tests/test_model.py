@@ -57,13 +57,13 @@ class ModelTest(unittest.TestCase):
         T = 548
         gas = self.sp['co_g']
         liquid = Liquid(gas.atoms, 'co_l', gas.freqs, D=1e-9)
-        electron = Electron(0.1, 0.05, 'e')
+        electron = Electron('e', dE=0.1)
         for species in (gas, liquid, electron):
             new = species.copy(newlabel=species.label + '_copy')
             self.assertEqual(new.label, species.label + '_copy')
             self.assertEqual(type(new), type(species))
         self.assertAlmostEqual(gas.copy().get_G(T), gas.get_G(T), places=12)
-        self.assertEqual(electron.copy().self_repulsion, 0.05)
+        self.assertEqual(electron.copy().get_G(T), electron.get_G(T))
 
     def test_get_G_without_temperature(self):
         gas = self.sp['co_g']

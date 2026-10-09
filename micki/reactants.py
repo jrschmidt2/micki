@@ -486,47 +486,52 @@ class _Fluid(_Thermo):
 
 
 class Electron(_Thermo):
-    """Electrons for electrochemical models.
+    """An electron at the electrode, for electrochemical steps.
+
+    Its free energy is G = -e U + dE, with U the electrode potential vs SHE
+    (set by the Model, Model.U_SHE). It has charge -1 and no atoms, and no
+    concentration: it does not appear as a concentration in rate laws and
+    is not a variable of the model. A reaction's n_electrons counts the
+    electrons it consumes.
 
     Parameters
     ----------
-    E : float
-        Energy of an electron in eV (e.g. -e times the electrode
-        potential).
-    self_repulsion : float
-        Coefficient in eV of the self-repulsion term,
-        lateral = self_repulsion * symbol.
     label : str
-        Name of the species.
+        Name of the species (default 'e'), as used in reaction strings.
+    dE : float
+        Energy shift in eV.
     """
 
-    def __init__(self, E, self_repulsion, label):
+    def __init__(self, label='e', dE=0.):
         _Thermo.__init__(self)
         self.atoms = Atoms()
-        self.potential_energy = E
         self.label = label
-        self.self_repulsion = self_repulsion
-        self.lateral = self_repulsion * self.symbol
+        self.dE = dE
+        self.charge = -1
+        self.U = 0.  # electrode potential vs SHE (V)
+        self._U_old = None
 
     def get_reference_state(self):
         return 1.
 
     def copy(self, newlabel=None):
-        label = self.label
-        if newlabel is not None:
-            label = newlabel
+        label = self.label if newlabel is None else newlabel
         with conventions(self.conventions):
-            return self.__class__(self.potential_energy, self.self_repulsion,
-                                  label)
+            new = Electron(label, self.dE)
+        new.U = self.U
+        return new
+
+    def is_update_needed(self, T):
+        return _Thermo.is_update_needed(self, T) or self.U != self._U_old
 
     def _calc_q(self, T):
-        self._calc_qelec(T)
-        if self.q['elec'] is None:
-            self.q['elec'] = 1.
-        self.q['tot'] = self.q['elec']
+        self.E['elec'] = (-self.U + self.dE) * self.scale['E']['elec']
+        self.S['elec'] = 0.
         self.E['tot'] = self.E['elec']
+        self.S['tot'] = 0.
         self.H = self.E['tot']
-        self.S['tot'] = self.S['elec']
+        self.q['tot'] = np.exp(-self.H / (kB * T))
+        self._U_old = self.U
 
 
 class Gas(_Fluid):

@@ -351,6 +351,11 @@ class Reaction:
         self.T = None
         self.Asite = None
         self.L = None
+        self.U = 0.  # electrode potential vs SHE (V), set by the Model
+        # electrons consumed as written (positive for a reduction)
+        self.n_electrons = (
+            sum(isinstance(sp, Electron) for sp in self.reactants)
+            - sum(isinstance(sp, Electron) for sp in self.products))
         self.scale_params = ['dH_act', 'dS_act', 'kfor', 'krev']
         self.alpha = None
         self.reversible = reversible
@@ -494,14 +499,19 @@ class Reaction:
         self._check_scale_param(param)
         self.scale[param] = value
 
-    def update(self, T=None, Asite=None, L=None, force=False):
+    def update(self, T=None, Asite=None, L=None, force=False, U=None):
         """Recompute the thermochemistry and rate constants at temperature
-        T (K), site area Asite (m^2) and diffusion length L (m), if any of
-        them (or a scale factor) changed, or if force. The Model calls
-        this."""
-        if not force and not self.is_update_needed(T, Asite, L):
+        T (K), site area Asite (m^2), diffusion length L (m) and electrode
+        potential U (V vs SHE; None keeps the current one), if any of them
+        (or a scale factor) changed, or if force. The Model calls this."""
+        if not force and not self.is_update_needed(T, Asite, L, U):
             return
 
+        if U is not None:
+            self.U = U
+        for species in self.species + list(self.ts or []):
+            if isinstance(species, Electron):
+                species.U = self.U
         for species in self.species:
             species.update(T=T, force=True)
 
@@ -593,7 +603,9 @@ class Reaction:
         self._calc_krev()
         self.scale_old = self.scale.copy()
 
-    def is_update_needed(self, T, Asite, L):
+    def is_update_needed(self, T, Asite, L, U=None):
+        if U is not None and U != self.U:
+            return True
         for species in self.species:
             if species.is_update_needed(T):
                 return True
@@ -610,19 +622,19 @@ class Reaction:
                 return True
         return False
 
-    def get_keq(self, T=None, Asite=None, L=None):
+    def get_keq(self, T=None, Asite=None, L=None, U=None):
         """Equilibrium constant (see update() for the arguments)."""
-        self.update(T, Asite, L)
+        self.update(T, Asite, L, U=U)
         return self.keq
 
-    def get_kfor(self, T=None, Asite=None, L=None):
+    def get_kfor(self, T=None, Asite=None, L=None, U=None):
         """Forward rate constant (see update() for the arguments)."""
-        self.update(T, Asite, L)
+        self.update(T, Asite, L, U=U)
         return self.kfor
 
-    def get_krev(self, T=None, Asite=None, L=None):
+    def get_krev(self, T=None, Asite=None, L=None, U=None):
         """Reverse rate constant (see update() for the arguments)."""
-        self.update(T, Asite, L)
+        self.update(T, Asite, L, U=U)
         return self.krev
 
     def _calc_keq(self):
@@ -833,7 +845,9 @@ class Model:
     """
 
     def __init__(self, T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
-                 analytic_jac=False):
+                 analytic_jac=False, U_SHE=0., pH=None):
+        self._U_SHE = U_SHE  # electrode potential vs SHE (V)
+        self.pH = pH
         self.reactions = OrderedDict()
         self._reactions = []
         self._species = []
@@ -854,6 +868,45 @@ class Model:
         self._z = z  # Diffusion length
         self.lattice = lattice
         self.reactor = reactor
+
+    def _conditions(self):
+        """Keyword arguments for Reaction.update."""
+        return {'T': self.T, 'Asite': self.Asite, 'L': self.z,
+                'U': self.U_SHE}
+
+    def set_U_SHE(self, U):
+        self._U_SHE = U
+        for reaction in self._reactions:
+            reaction.update(**self._conditions())
+        if self.U0 is not None:
+            self.set_initial_conditions(self.U0)
+
+    def get_U_SHE(self):
+        return self._U_SHE
+
+    U_SHE = property(get_U_SHE, set_U_SHE,
+                     doc='Electrode potential (V vs SHE)')
+
+    def get_U_RHE(self):
+        if self.pH is None:
+            raise ValueError('Set Model.pH to use the RHE scale')
+        return self._U_SHE + kB * self.T * np.log(10.) * self.pH
+
+    U_RHE = property(get_U_RHE, None,
+                     doc='Electrode potential (V vs RHE), read-only: '
+                         'U_SHE + (kT ln 10 / e) pH')
+
+    def set_potential(self, U, scale='SHE'):
+        """Set the electrode potential U on the 'SHE' or 'RHE' scale (the
+        latter needs Model.pH)."""
+        if scale == 'SHE':
+            self.U_SHE = U
+        elif scale == 'RHE':
+            if self.pH is None:
+                raise ValueError('Set Model.pH to use the RHE scale')
+            self.U_SHE = U - kB * self.T * np.log(10.) * self.pH
+        else:
+            raise ValueError("scale must be 'SHE' or 'RHE'")
 
     def _check_conventions(self, reactions):
         """Reactions and species of one model must have been built under the
@@ -893,7 +946,7 @@ class Model:
             if reaction.ts is not None:
                 for ts in reaction.ts:
                     ts.lattice = self.lattice
-            reaction.update(T=self.T, Asite=self.Asite, L=self.z)
+            reaction.update(**self._conditions())
 
     def set_solvent(self, solvent):
         """Make the Liquid species labeled solvent the solvent: its
@@ -942,7 +995,7 @@ class Model:
     def set_T(self, T):
         self._T = T
         for reaction in self._reactions:
-            reaction.update(T=T, Asite=self.Asite, L=self.z)
+            reaction.update(**self._conditions())
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
@@ -954,7 +1007,7 @@ class Model:
     def set_Asite(self, Asite):
         self._Asite = Asite
         for reaction in self._reactions:
-            reaction.update(T=self.T, Asite=Asite, L=self.z)
+            reaction.update(**self._conditions())
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
@@ -966,7 +1019,7 @@ class Model:
     def set_z(self, z):
         self._z = z
         for reaction in self._reactions:
-            reaction.update(T=self.T, Asite=self.Asite, L=z)
+            reaction.update(**self._conditions())
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
@@ -993,7 +1046,7 @@ class Model:
             if reaction.ts is not None:
                 for ts in reaction.ts:
                     ts.lattice = self.lattice
-            reaction.update(T=self.T, Asite=self.Asite, L=self.z, force=True)
+            reaction.update(force=True, **self._conditions())
         if self.U0 is not None:
             self.set_initial_conditions(self.U0)
 
@@ -1062,7 +1115,8 @@ class Model:
         # sites.
         self._variable_species = []
         for species in self._species:
-            if species.label not in self.fixed + [self.solvent]:
+            if species.label not in self.fixed + [self.solvent] \
+                    and not isinstance(species, Electron):
                 self._variable_species.append(species)
         self.nvariables = len(self._variable_species)
 
@@ -1185,8 +1239,8 @@ class Model:
         self.dypdr = np.zeros((self.nvariables, nrxns), dtype=float)
 
         for j, rxn in enumerate(self._reactions):
-            rate_for = rxn.get_kfor(self.T, self.Asite, self.z)
-            rate_rev = rxn.get_krev(self.T, self.Asite, self.z)
+            rate_for = rxn.get_kfor(**self._conditions())
+            rate_rev = rxn.get_krev(**self._conditions())
 
             for i, species in enumerate(self._variable_species):
                 rcount = rxn.reactants.species.count(species)
@@ -1380,7 +1434,9 @@ class Model:
         with the same initial conditions if initialize."""
         newmodel = Model(self.T, self.Asite, z=self.z, lattice=self.lattice,
                          reactor=self.reactor, rhocat=self.rhocat,
-                         analytic_jac=self.analytic_jac)
+                         analytic_jac=self.analytic_jac,
+                         U_SHE=self.U_SHE,
+                         pH=self.pH)
         newmodel.add_reactions(self.reactions)
         newmodel.set_fixed(self.fixed)
         newmodel.set_solvent(self.solvent)
