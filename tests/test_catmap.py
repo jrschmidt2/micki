@@ -13,6 +13,12 @@ own thermochemistry and interaction model (catmap_models_reference.py);
 micki, computing all thermochemistry itself, reproduces CatMap's free
 energies, rate constants, coverages and rates.
 
+catmap_echem.py has two electrochemical models (oxygen reduction with
+double-layer transport and 2e-/4e- pathways; hydrogen evolution) in
+CatMap's simple_electrochemical conventions, solved by CatMap over a range
+of potentials (catmap_echem_reference.py). micki reproduces them with
+explicit species at pH 0 (H3O+ at 1 M and an electron for CatMap's pe_g).
+
 Run from the repository root:
 
     python -m unittest discover -s tests -v
@@ -26,6 +32,7 @@ import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import catmap_echem  # noqa: E402
 import catmap_models  # noqa: E402
 import catmap_wgs  # noqa: E402
 import numpy as np  # noqa: E402
@@ -135,6 +142,57 @@ class CatMapModelsTest(unittest.TestCase):
                     if flux < 1e7 * abs(ref):
                         rate = float(r['r%d' % i])
                         self.assertLessEqual(abs(rate / ref - 1), 1e-6,
+                                             '{} r{}'.format(msg, i))
+
+
+
+class CatMapEchemTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        warnings.simplefilter('ignore')
+        with open(catmap_echem.REFERENCE) as f:
+            cls.reference = json.load(f)
+
+    def test_models(self):
+        for key, m in catmap_echem.MODELS.items():
+            for c in self.reference[key]:
+                msg = '{} U={}'.format(key, c['V'])
+                names, rxns = catmap_echem.build(m)
+                model = Model(catmap_echem.T, Asite=1e-19, U_SHE=c['V'])
+                model.add_reactions(rxns)
+                U0 = catmap_echem.initial(m)
+                model.set_fixed(list(U0))
+                model.set_initial_conditions(U0)
+                T = catmap_echem.T
+                # free energies; CatMap's pe_g is H3O+ + e- - H2O here
+                for name, G in c['G'].items():
+                    if name in names:
+                        self.assertAlmostEqual(names[name].get_G(T), G,
+                                               places=12, msg=msg + name)
+                pe = (names['h3o_aq'].get_G(T) + names['e'].get_G(T)
+                      - names['h2o_l'].get_G(T))
+                self.assertAlmostEqual(pe, c['G']['pe_g'], places=12)
+                # rate constants (all activities of the pe_g pair are 1)
+                for i, rxn in enumerate(rxns.values()):
+                    for k, ref in ((rxn.kfor, c['kf'][i]),
+                                   (rxn.krev, c['kr'][i])):
+                        self.assertLessEqual(abs(float(k) / ref - 1), 1e-11,
+                                             '{} r{}'.format(msg, i))
+                _, U, r = model.find_steady_state()
+                for a, theta in c['coverage'].items():
+                    if theta > 1e-12:
+                        self.assertLessEqual(abs(U[a] / theta - 1), 1e-8,
+                                             msg + ' ' + a)
+                # net rates of steps that are not nearly equilibrated
+                for i, (name, rxn) in enumerate(rxns.items()):
+                    flux = float(rxn.kfor)
+                    for sp in rxn.reactants:
+                        if sp.label in U:
+                            flux *= U[sp.label]
+                    ref = c['rates'][i]
+                    if abs(ref) > 1e-20 and flux < 1e7 * abs(ref):
+                        self.assertLessEqual(abs(r[name] / ref - 1), 1e-6,
                                              '{} r{}'.format(msg, i))
 
 
