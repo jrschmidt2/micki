@@ -81,7 +81,7 @@ number divides the number of orientations.
 
 | Module | Contents |
 |---|---|
-| `micki.reactants` | `Gas`, `Liquid`, `Adsorbate`, `Electron` |
+| `micki.reactants` | `Gas`, `Liquid`, `Solute`, `Adsorbate`, `Electron` |
 | `micki.model` | `Reaction`, `Model`, `reactions_from_strings` |
 | `micki.analysis` | `ModelAnalysis` |
 | `micki.lattice` | `Lattice` |
@@ -94,6 +94,6 @@ number divides the number of orientations.
 | `micki.solver` | `IDASolver` (internal) |
 
 The most-used names are importable from `micki` directly: `Gas`, `Liquid`,
-`Adsorbate`, `Electron`, `Reaction`, `Model`, `reactions_from_strings`,
+`Solute`, `Adsorbate`, `Electron`, `Reaction`, `Model`, `reactions_from_strings`,
 `ModelAnalysis`, `Lattice`, `EnergyReference`, `set_conventions`,
 `get_conventions`, `conventions`.

@@ -19,7 +19,7 @@ in the [overview](index.md#units). Defaults marked *(conventions)* change under
 
 ```python
 Gas(atoms, label, freqs=None, symm=1, spin=0., eref=None, rhoref=None,
-    dE=0., pref=None)
+    dE=0., pref=None, E=None, S=None, charge=0)
 ```
 
 | Parameter | Default | Meaning |
@@ -33,6 +33,17 @@ Gas(atoms, label, freqs=None, symm=1, spin=0., eref=None, rhoref=None,
 | `rhoref` | 1 M | Reference concentration (M) of the free energy. |
 | `dE` | 0 | Energy shift (eV). |
 | `pref` | `None` *(conventions: 1)* | Reference pressure (bar) instead of `rhoref`; the reference concentration then follows T. |
+| `E`, `S` | `None` | Given energy (eV) and entropy (eV/K) at the reference state, instead of computing them from the structure and frequencies (see below). |
+| `charge` | 0 | Charge in units of e (charge balance of reactions). |
+
+**Given energies.** With `E=` (and optionally `S=`, default 0), a species'
+thermochemistry is not computed but taken as E and S, independent of
+temperature: G(T) = E − T·S, plus kT (the ideal gas's pV) for gases only.
+Solution-phase values are already enthalpies or free energies. The structure
+is then used only for the composition (e.g. `Atoms('OOH')`, no calculator
+needed), and `eref` is not applied. `dE`, lateral interactions and (for
+adsorbates) configurational entropy still add. A plain free energy is E = G,
+S = 0. The same holds for `Liquid` and `Adsorbate`.
 
 Masses are the most abundant isotopes' (`micki.masses`), or ASE's standard
 atomic weights *(conventions)*. Linear molecules are detected from the
@@ -42,15 +53,26 @@ geometry.
 
 ```python
 Liquid(atoms, label, freqs=None, symm=1, spin=0., eref=None, rhoref=1.,
-       S=None, D=None, dE=0.)
+       S=None, D=None, dE=0., E=None, charge=0)
 ```
 
-Same as `Gas` (without `pref`), plus:
+Same as `Gas` (without `pref`; a given E gets no kT), plus:
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `S` | `None` | Liquid-phase entropy; stored and saved to databases, not used in the thermochemistry. |
 | `D` | `None` | Diffusion coefficient (m²/s) for `DIFF` and `DIFF_LIQ`. |
+
+### Solute
+
+```python
+Solute(label, E, formula, S=0., charge=0, rhoref=1., D=None, dE=0.)
+```
+
+A dissolved ion or molecule with a given free energy (a `Liquid` with given E
+and S). Examples are H₃O⁺, OH⁻, acetate, or water as the solvent
+(`rhoref=55.5`, so the pure liquid has activity 1). `formula` gives the
+composition for the atom balance, e.g. `'H3O'`. G = E − T·S at the reference
+concentration `rhoref` (M).
 
 `liquid.R` is the average van der Waals radius (Å), used by `DIFF_LIQ`.
 
@@ -58,7 +80,8 @@ Same as `Gas` (without `pref`), plus:
 
 ```python
 Adsorbate(atoms, label, freqs=None, ts=None, spin=0., sites=None,
-          lattice=None, eref=None, dE=0., symm=1)
+          lattice=None, eref=None, dE=0., symm=1, sitefree=False, E=None,
+          S=None, charge=0)
 ```
 
 | Parameter | Default | Meaning |
@@ -74,6 +97,8 @@ Adsorbate(atoms, label, freqs=None, ts=None, spin=0., sites=None,
 | `dE` | 0 | Energy shift (eV). |
 | `symm` | 1 | Symmetry number dividing the orientations counted by the lattice (2 for end-to-end symmetric multidentate species). Warns if larger than the number counted. |
 | `sitefree` | `False` | The species deliberately occupies no sites (e.g. a mobile precursor). Otherwise a model raises an error for an adsorbate without sites that is not an empty site, and, with a lattice, for a transition state without sites. |
+| `E`, `S` | `None` | Given energy and entropy instead of computed ones (see `Gas`); configurational entropy from a lattice still adds. |
+| `charge` | 0 | Charge in units of e. |
 
 ### Electron
 
@@ -145,7 +170,7 @@ Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
 | `clip` | `None` *(conventions: `'coverage'` for TST, EQUIL, STICK)* | Negative barriers: `None` raises at zero coverage; `'zero_coverage'` (TST) clips once at zero coverage; `'coverage'` (TST, EQUIL, STICK, `dG_act`) uses Max(ΔG‡, ΔG, 0) at the current coverages. |
 | `alpha` | `None` = computed *(conventions: 0.5)* | Weight of the products' coverage terms in the transition-state energy; computed BEP-style if `None`. |
 | `explicit_ts` | `False` | Transition-state energy from the TS species only (with `ts.lateral`). |
-| `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms (empty sites, i.e. species listed in a reaction species' `sites`, and electrons not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
+| `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms and carry the same charge (for the atoms, empty sites, i.e. species listed in a reaction species' `sites`, and electrons are not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
 
 Under the CatMap conventions, transition states also ignore the `dE` of the
 reactants and products (`reaction.ts_follows_dE = False`). An explicit

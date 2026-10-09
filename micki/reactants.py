@@ -50,10 +50,23 @@ class _Thermo:
         ('E', 'S': per mode, 'H'), for sensitivity analysis.
     conventions : str
         The micki.conventions in effect when the species was built.
+    charge : int
+        Charge in units of e (checked by the charge balance of reactions).
+
+    Gas, Liquid and Adsorbate also accept given energies, E= and S=, used
+    instead of computing the thermochemistry from the structure and
+    frequencies: E (eV) and S (eV/K) at the reference state, independent
+    of temperature, so G(T) = E - T S, plus kT (pV) for gases. The
+    structure then only gives the composition (e.g. Atoms('OOH')); eref is
+    not applied to a given E. dE, lateral interactions and (for
+    adsorbates) configurational entropy still add.
     """
 
     def __init__(self):
         self.T = None
+        # given energy and entropy (E=, S=) instead of computed ones
+        self.E_given = None
+        self.S_given = None
 
         self.mode = ['tot', 'trans', 'trans2D', 'rot', 'vib', 'elec']
 
@@ -83,9 +96,9 @@ class _Thermo:
         self.sitefree = False
         self.lattice = None
         self.D = None
-        self.Sliq = None
         self.rho0 = 1.
         self.freqs = []
+        self.charge = 0
 
     def set_atoms(self, atoms):
         if atoms is None:
@@ -126,7 +139,18 @@ class _Thermo:
 
     eref = property(get_reference, set_reference)
 
+    def _set_given(self, E, S, label):
+        """Store given E and S (must happen before atoms are set, since a
+        given E needs no calculator)."""
+        if S is not None and E is None:
+            raise ValueError('{}: S requires E'.format(label))
+        self.E_given = E
+        self.S_given = None if E is None else (0. if S is None else S)
+
     def update_potential_energy(self):
+        if self.E_given is not None:
+            self.potential_energy = 0.
+            return
         if self.atoms is None or len(self.atoms) == 0:
             self.potential_energy = 0.
         else:
@@ -245,7 +269,9 @@ class _Thermo:
                 'symm': self.symm,
                 'spin': self.spin,
                 'D': self.D,
-                'S': self.Sliq,
+                'E': self.E_given,
+                'S': self.S_given,
+                'charge': self.charge,
                 # with a reference pressure, rho0 depends on T
                 'rhoref': 1. if getattr(self, 'pref', None) else self.rho0,
                 'pref': getattr(self, 'pref', None),
@@ -327,6 +353,15 @@ class _Thermo:
                                  np.log(1. - np.exp(-thetavib/T))) * \
             self.scale['S']['vib']
 
+    def _calc_given(self, T):
+        """Thermochemistry from the given E and S."""
+        self.E['elec'] = (self.E_given + self.dE) * self.scale['E']['elec']
+        self.S['elec'] = self.S_given * self.scale['S']['elec']
+        self.E['tot'] = self.E['elec']
+        self.S['tot'] = self.S['elec']
+        self.H = self.E['tot']
+        self.q['tot'] = np.exp(-(self.H - T * self.S['tot']) / (kB * T))
+
     def _calc_qelec(self, T):
         self.E['elec'] = self.potential_energy + self.dE
         self.E['elec'] *= self.scale['E']['elec']
@@ -370,16 +405,22 @@ class _Fluid(_Thermo):
     """Common base class of Gas and Liquid (ideal-gas translation, rigid
     rotor, harmonic vibrations); see Gas for the parameters."""
     def __init__(self, atoms, label, freqs=None, symm=1, spin=0.,
-                 eref=None, rhoref=None, dE=0., pref=None):
+                 eref=None, rhoref=None, dE=0., pref=None, E=None, S=None,
+                 charge=0):
         _Thermo.__init__(self)
+        self._set_given(E, S, label)
+        self.charge = charge
         self.atoms = atoms
         self.freqs = freqs
         self.label = label
         self.symm = symm
         self.spin = spin
         self.eref = eref
-        self.linear = self._is_linear()
-        self.ncut = 6 - self.linear + self.ts
+        if self.E_given is None:
+            self.linear = self._is_linear()
+            self.ncut = 6 - self.linear + self.ts
+        else:
+            self.linear, self.ncut = None, 0
         if pref is not None and rhoref is not None:
             raise ValueError('Give either rhoref or pref, not both!')
         if pref is None and rhoref is None and isinstance(self, Gas) \
@@ -391,7 +432,7 @@ class _Fluid(_Thermo):
         self.pref = pref
         self.dE = dE
         self._R = None
-        if not np.all(self.freqs[self.ncut:] > 0):
+        if self.E_given is None and not np.all(self.freqs[self.ncut:] > 0):
             raise ValueError("Extra imaginary frequencies found for {}!"
                              "".format(label))
 
@@ -406,11 +447,18 @@ class _Fluid(_Thermo):
             return self.__class__(self.atoms, label, self.freqs,
                                   self.symm, self.spin, self.eref,
                                   None if self.pref else self.rho0,
-                                  self.dE, self.pref)
+                                  self.dE, self.pref, self.E_given,
+                                  self.S_given, self.charge)
 
     def _calc_q(self, T):
         if self.pref is not None:
             self.rho0 = bar_to_molar(self.pref, T)
+        if self.E_given is not None:
+            self._calc_given(T)
+            if isinstance(self, Gas):
+                # H = E + pV for an ideal gas (as for computed fluids)
+                self.H = self.E['tot'] + kB * T
+            return
         self._calc_qelec(T)
         self._calc_qtrans(T)
         self._calc_qrot(T)
@@ -516,6 +564,11 @@ class Gas(_Fluid):
         concentration pref / RT then follows the temperature. pref=1 is
         CatMap's (and ASE's) convention and the default under
         micki.set_conventions('catmap').
+    E, S : float, optional
+        Given energy (eV) and entropy (eV/K) at the reference state instead
+        of computed ones; G = E + kT - T S (kT: pV of the ideal gas).
+    charge : int
+        Charge in units of e.
 
     Rates do not depend on the reference state, but free energies, the
     computed alpha of reactions with gases, and barriers clipped with
@@ -530,19 +583,19 @@ class Liquid(_Fluid):
 
     Parameters are those of Gas (without pref), plus:
 
-    S : float, optional
-        Liquid-phase entropy; stored (and saved to databases) but not used
-        in the thermochemistry.
+    E, S : float, optional
+        Given energy (eV) and entropy (eV/K) at the reference state instead
+        of computed ones; G = E - T S (no pV term in a condensed phase).
     D : float, optional
         Diffusion coefficient in m^2/s, for the DIFF and DIFF_LIQ rate
         laws.
     """
 
     def __init__(self, atoms, label, freqs=None, symm=1,
-                 spin=0., eref=None, rhoref=1., S=None, D=None, dE=0.):
+                 spin=0., eref=None, rhoref=1., S=None, D=None, dE=0.,
+                 E=None, charge=0):
         _Fluid.__init__(self, atoms, label, freqs, symm, spin, eref,
-                        rhoref, dE)
-        self.Sliq = S
+                        rhoref, dE, E=E, S=S, charge=charge)
         self.D = D
 
     def copy(self, newlabel=None):
@@ -550,9 +603,48 @@ class Liquid(_Fluid):
         if newlabel is not None:
             label = newlabel
         with conventions(self.conventions):
-            return self.__class__(self.atoms, label, self.freqs,
-                                  self.symm, self.spin, self.eref,
-                                  self.rho0, self.Sliq, self.D, self.dE)
+            return Liquid(self.atoms, label, self.freqs, self.symm,
+                          self.spin, self.eref, self.rho0, self.S_given,
+                          self.D, self.dE, self.E_given, self.charge)
+
+
+class Solute(Liquid):
+    """A dissolved species (ion or molecule) with a given standard free
+    energy, e.g. H3O+, OH-, acetate, or the solvent.
+
+    Parameters
+    ----------
+    label : str
+        Name of the species.
+    E : float
+        Energy (eV) at the reference concentration rhoref; G = E - T S.
+    formula : str
+        Chemical formula, for the atom balance of reactions (e.g. 'H3O').
+    S : float
+        Entropy (eV/K) at the reference concentration (default 0, so E is
+        the free energy).
+    charge : int
+        Charge in units of e (e.g. +1 for H3O+).
+    rhoref : float
+        Reference concentration in M (default 1 M; 55.5 M for water as
+        the solvent, i.e. activity 1 for the pure liquid).
+    D : float, optional
+        Diffusion coefficient in m^2/s.
+    dE : float
+        Energy shift in eV.
+    """
+
+    def __init__(self, label, E, formula, S=0., charge=0, rhoref=1., D=None,
+                 dE=0.):
+        Liquid.__init__(self, Atoms(formula), label, rhoref=rhoref, S=S,
+                        D=D, dE=dE, E=E, charge=charge)
+        self.formula = formula
+
+    def copy(self, newlabel=None):
+        label = self.label if newlabel is None else newlabel
+        with conventions(self.conventions):
+            return Solute(label, self.E_given, self.formula, self.S_given,
+                          self.charge, self.rho0, self.D, self.dE)
 
 
 class Adsorbate(_Thermo):
@@ -599,6 +691,11 @@ class Adsorbate(_Thermo):
         a site balance. Otherwise a Model raises an error for an adsorbate
         without sites that is not itself an empty site, and, with a
         lattice, for a transition state without sites.
+    E, S : float, optional
+        Given energy (eV) and entropy (eV/K) instead of computed ones;
+        G = E - T S (plus configurational entropy from a lattice).
+    charge : int
+        Charge in units of e.
 
     Empty sites are Adsorbates without sites that other species list in
     their sites; nothing else marks them.
@@ -606,8 +703,10 @@ class Adsorbate(_Thermo):
 
     def __init__(self, atoms, label, freqs=None, ts=None,
                  spin=0., sites=None, lattice=None, eref=None, dE=0.,
-                 symm=1, sitefree=False):
+                 symm=1, sitefree=False, E=None, S=None, charge=0):
         _Thermo.__init__(self)
+        self._set_given(E, S, label)
+        self.charge = charge
         self.atoms = atoms
         self.freqs = freqs
         self.label = label
@@ -621,7 +720,7 @@ class Adsorbate(_Thermo):
         if sitefree and self.sites:
             raise ValueError('{} has sites and sitefree=True'.format(label))
         self.sitefree = sitefree
-        if not np.all(self.freqs[1 if ts else 0:] > 0):
+        if self.E_given is None and not np.all(self.freqs[1 if ts else 0:] > 0):
             raise ValueError("Imaginary frequencies found for {}!"
                              "".format(label))
 
@@ -629,12 +728,15 @@ class Adsorbate(_Thermo):
         return 1.
 
     def _calc_q(self, T):
-        self._calc_qvib(T, ncut=1 if self.ts else 0)
-        self._calc_qelec(T)
-        self.q['tot'] = self.q['vib']
-        self.E['tot'] = self.E['elec'] + self.E['vib']
-        self.H = self.E['tot']
-        self.S['tot'] = self.S['elec'] + self.S['vib']
+        if self.E_given is not None:
+            self._calc_given(T)
+        else:
+            self._calc_qvib(T, ncut=1 if self.ts else 0)
+            self._calc_qelec(T)
+            self.q['tot'] = self.q['vib']
+            self.E['tot'] = self.E['elec'] + self.E['vib']
+            self.H = self.E['tot']
+            self.S['tot'] = self.S['elec'] + self.S['vib']
         # Configurational entropy kB ln(sigma), where sigma is the number of
         # distinguishable orientations: the lattice counts the orientations
         # of multidentate species, and the symmetry number symm divides out
@@ -652,6 +754,8 @@ class Adsorbate(_Thermo):
                           'lattice.'.format(self.label, self.symm,
                                             np.exp(S_conf / kB)))
         self.S['tot'] += S_conf - kB * np.log(self.symm)
+        if self.E_given is not None:
+            self.q['tot'] = np.exp(-(self.H - T * self.S['tot']) / (kB * T))
 
 
     def copy(self, newlabel=None):
@@ -662,7 +766,8 @@ class Adsorbate(_Thermo):
             return self.__class__(self.atoms, label, self.freqs,
                                   self.ts, self.spin, self.sites,
                                   self.lattice, self.eref, self.dE,
-                                  self.symm, self.sitefree)
+                                  self.symm, self.sitefree, self.E_given,
+                                  self.S_given, self.charge)
 
 
 class _Reactants:

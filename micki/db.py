@@ -23,7 +23,7 @@ def row_to_thermo(row):
     """A species (Adsorbate, Gas or Liquid) from an ASE database row written
     by save_to_db: its parameters are in row.data ('thermo', 'freqs',
     'sites', 'sitefree', 'ts', 'symm', 'spin', 'dE', 'rhoref', 'pref', 'D',
-    'S'); sites
+    'E', 'S', 'charge'); sites
     are still labels (read_from_db resolves them)."""
     name = row.name
     freqs = get_data(row, 'freqs')
@@ -38,6 +38,10 @@ def row_to_thermo(row):
     S = get_data(row, 'S')
     pref = row.data.get('pref')  # absent in databases written before 2.1
     sitefree = row.data.get('sitefree', False)  # absent before 2.2
+    E = row.data.get('E')  # given energy, absent before 2.3
+    charge = row.data.get('charge', 0)
+    if E is None:
+        S = None  # before 2.3, 'S' was an unused liquid entropy
     if pref is not None or rhoref == 1.:
         # unused with pref; else the default, which depends on
         # micki.conventions
@@ -46,13 +50,15 @@ def row_to_thermo(row):
     if thermo == 'Adsorbate':
         return Adsorbate(row.toatoms(), name, freqs,
                          ts=ts, sites=sites, dE=dE, symm=symm,
-                         sitefree=sitefree)
+                         sitefree=sitefree, E=E, S=S, charge=charge)
     elif thermo == 'Gas':
         return Gas(row.toatoms(), name, freqs,
-                   symm=symm, spin=spin, rhoref=rhoref, dE=dE, pref=pref)
+                   symm=symm, spin=spin, rhoref=rhoref, dE=dE, pref=pref,
+                   E=E, S=S, charge=charge)
     elif thermo == 'Liquid':
         return Liquid(row.toatoms(), name, freqs,
-                      symm=symm, spin=spin, D=D, S=S, rhoref=rhoref, dE=dE)
+                      symm=symm, spin=spin, D=D, S=S, rhoref=rhoref, dE=dE,
+                      E=E, charge=charge)
     else:
         raise ValueError('Unknown Thermo type {}!'.format(thermo))
 

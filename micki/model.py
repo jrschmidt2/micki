@@ -195,7 +195,7 @@ class Reaction:
         (no interpolation between reactants and products).
     check_balance : bool
         Raise a ValueError if the reactants, products and transition state
-        do not contain the same atoms. Empty sites (species that a species
+        do not contain the same atoms, or do not carry the same charge. Empty sites (species that a species
         of the reaction lists in its sites) and electrons are not counted,
         and an adsorbate whose structure contains the atoms of its (first)
         site species, e.g. a slab, is counted without them.
@@ -465,6 +465,18 @@ class Reaction:
             raise ValueError('{} does not conserve atoms ({}); pass '
                              'check_balance=False if this is intended'
                              ''.format(self, states))
+        # charge (electrons included)
+        charges = [sum(sp.charge for sp in self.reactants),
+                   sum(sp.charge for sp in self.products)]
+        if self.ts is not None:
+            charges.append(sum(sp.charge for sp in self.ts))
+        if len(set(charges)) > 1:
+            names = ['reactants', 'products', 'transition state']
+            raise ValueError('{} does not conserve charge ({}); pass '
+                             'check_balance=False if this is intended'
+                             ''.format(self, ', '.join(
+                                 '{} {:+d}'.format(n, c)
+                                 for n, c in zip(names, charges))))
 
     def _check_scale_param(self, param):
         if param not in self.scale:
