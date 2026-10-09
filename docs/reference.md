@@ -9,8 +9,8 @@ in the [overview](index.md#units). Defaults marked *(conventions)* change under
 - [Model](#model)
 - [ModelAnalysis](#modelanalysis)
 - [Lattice](#lattice)
-- [Lateral interactions: first_order](#microkilateralfirst_order)
-- [Conventions](#microkiconventions)
+- [Lateral interactions: first_order](#mickilateralfirst_order)
+- [Conventions](#mickiconventions)
 - [Electrolyte](#mickielectrochem), [EnergyReference](#energyreference), [databases](#mickidb), [VASP output](#mickiioparse_vasp_out), [utilities](#mickiutils)
 
 ## Species
@@ -213,7 +213,7 @@ reactants and products (`reaction.ts_follows_dE = False`). An explicit
 
 ```python
 Model(T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
-      analytic_jac=False, U_SHE=0., pH=None)
+      analytic_jac=False, U_SHE=0., pH=None, roughness=1., delta=None)
 ```
 
 | Parameter | Default | Meaning |
