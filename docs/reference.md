@@ -247,6 +247,14 @@ scale.
 | `copy(initialize=True)` | New model with the same settings and (shared) reactions. |
 | `check_rates(U, epsilon=1e-6)` | Warn about rate constants above kT/h (run after every solve). |
 | `finalize()` | Mark as not initialized. |
+| `current(r=None, unit='mA/cm2', cathodic_negative=True)` | Current density per geometric area: −e·(roughness/Asite)·Σ n_electrons·r over the reactions, from rates `r` (default: the last solution). Units `'mA/cm2'`, `'A/m2'`, `'A/cm2'`, `'uA/cm2'`. |
+| `partial_currents(r=None, unit='mA/cm2', cathodic_negative=True)` | `{name: j}` of the electrochemical reactions. |
+| `electron_rate(r=None)` | Electrons consumed per site and second, Σ n_electrons·r. |
+| `production_rate(label, r=None)` | Net production of a species per site and second, also for fixed species. |
+| `faradaic_efficiency(label, n, r=None)` | Fraction of the electrons that make `label` (n electrons per molecule). |
+| `selectivity(product, reactant, r=None)` | Product formed per reactant consumed, e.g. the H₂O₂ selectivity of oxygen reduction, which equals the RRDE quantity 2·j_peroxide/(j_peroxide + j_total). |
+| `sweep(potentials, scale='SHE', **kwargs)` | Steady states over potentials, each started from the previous one. Returns an object with `U`, `U_SHE`, `j` (mA/cm²), `states`, `rates`, `method`; keyword arguments go to `find_steady_state`. |
+| `tafel_slope(dU=1e-3)` | dU/dlog₁₀\|j\| (mV/decade) at the current potential, by central differences. |
 
 | Attribute | Meaning |
 |---|---|
@@ -266,7 +274,7 @@ ModelAnalysis(model, product_reaction, Uequil, tol=1e-3, dt=3600)
 | Parameter | Default | Meaning |
 |---|---|---|
 | `model` | — | Model with reactions and fixed species. |
-| `product_reaction` | — | Name of the reaction whose net rate r is analyzed. |
+| `product_reaction` | — | The analyzed quantity r: a reaction name (its net rate), `'current'` (the current density), or a function `f(model, rates)` of the steady state. |
 | `Uequil` | — | Initial conditions; the reference steady state is found from them. |
 | `tol` | 1e-3 | Tolerance of `check_converged`. |
 | `dt` | 3600 | Unused. |
@@ -343,6 +351,7 @@ Solution species of an aqueous electrolyte, on the SHE scale.
 | Function | Meaning |
 |---|---|
 | `levich_delta(nu, rpm, D=None)` | Nernst layer thickness (m) at a rotating disk: 1.61 D^⅓ ν^⅙ ω^−½ (ν in m²/s, about 1e-6 for water; ω = 2π·rpm/60). Without D, the function of D for `Model(delta=...)`. |
+| `tafel_slope(U, j, T=298.15)` | Tafel slopes dU/dlog₁₀\|j\| (mV/decade) of a polarization curve and the apparent transfer coefficients 2.303kT/(e·\|slope\|), as arrays. |
 | `film_rhocat(Asite, roughness, delta)` | Site concentration (M) relative to the film volume, for `Model(rhocat=...)`: physical near-surface transients, needed when solution reactions act in the film. Steady states of film transport and surface steps alone do not depend on it. |
 
 ## EnergyReference

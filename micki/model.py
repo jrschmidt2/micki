@@ -2,6 +2,7 @@
 
 import re
 import warnings
+from types import SimpleNamespace
 
 from collections import Counter, OrderedDict
 from collections.abc import Mapping
@@ -9,7 +10,7 @@ from collections.abc import Mapping
 import numpy as np
 import sympy as sym
 
-from ase.units import kB, _hplanck, kg, _k, _Nav, mol
+from ase.units import kB, _hplanck, kg, _k, _Nav, mol, _e
 
 from micki.reactants import _Thermo, _Fluid, _Reactants, Gas, Liquid, Adsorbate
 from micki.reactants import Electron
@@ -1610,6 +1611,117 @@ class Model:
                                   "Value is {} kB T / h (should be <= 1)."
                                   "".format(reaction, ratio),
                                   RuntimeWarning, stacklevel=2)
+
+    # electrochemical outputs
+
+    _CURRENT_UNITS = {'A/m2': 1., 'mA/cm2': 0.1, 'A/cm2': 1e-4,
+                      'uA/cm2': 100.}
+
+    def _last_rates(self, r):
+        if r is not None:
+            return r
+        if not getattr(self, 'r', None):
+            raise ValueError('No rates yet: solve the model first')
+        return self.r[-1]
+
+    def partial_currents(self, r=None, unit='mA/cm2', cathodic_negative=True):
+        """Current density of each reaction, {name: j}, from rates r
+        (default: the last solution): j = -e n_electrons r roughness/Asite
+        per geometric area, so reductions give negative (cathodic) currents
+        unless cathodic_negative=False. unit: 'mA/cm2' (default), 'A/m2',
+        'A/cm2' or 'uA/cm2'."""
+        r = self._last_rates(r)
+        if unit not in self._CURRENT_UNITS:
+            raise ValueError('unit must be one of {}'.format(
+                sorted(self._CURRENT_UNITS)))
+        factor = (_e * self.roughness / self.Asite
+                  * self._CURRENT_UNITS[unit]
+                  * (-1. if cathodic_negative else 1.))
+        return {name: factor * rxn.n_electrons * float(r[name])
+                for name, rxn in self.reactions.items() if rxn.n_electrons}
+
+    def current(self, r=None, unit='mA/cm2', cathodic_negative=True):
+        """Total current density (sum of partial_currents)."""
+        return sum(self.partial_currents(r, unit, cathodic_negative).values())
+
+    def electron_rate(self, r=None):
+        """Electrons consumed per site and second, sum of n_electrons r."""
+        r = self._last_rates(r)
+        return sum(rxn.n_electrons * float(r[name])
+                   for name, rxn in self.reactions.items())
+
+    def production_rate(self, label, r=None):
+        """Net production of species `label` per site and second (also for
+        fixed species), from the reaction stoichiometry and rates r."""
+        r = self._last_rates(r)
+        total = 0.
+        for name, rxn in self.reactions.items():
+            nu = (sum(sp.label == label for sp in rxn.products)
+                  - sum(sp.label == label for sp in rxn.reactants))
+            total += nu * float(r[name])
+        return total
+
+    def faradaic_efficiency(self, label, n, r=None):
+        """Fraction of the transferred electrons that make species `label`,
+        which needs n electrons per molecule."""
+        return n * self.production_rate(label, r) / self.electron_rate(r)
+
+    def selectivity(self, product, reactant, r=None):
+        """Fraction of the consumed reactant that becomes product (per
+        molecule), e.g. the H2O2 selectivity of oxygen reduction,
+        selectivity('h2o2_aq', 'o2_aq'), which is the RRDE quantity
+        2 j_peroxide / (j_peroxide + j_total)."""
+        return (self.production_rate(product, r)
+                / -self.production_rate(reactant, r))
+
+    def sweep(self, potentials, scale='SHE', **kwargs):
+        """Steady states over a series of electrode potentials (V, on the
+        'SHE' or 'RHE' scale), each started from the previous one
+        (continuation; the first from the current initial conditions).
+
+        Returns a SimpleNamespace with U (as given), U_SHE, j (mA/cm2,
+        cathodic negative), states and rates (dicts per potential) and
+        method (the steady-state path per potential). Keyword arguments go
+        to find_steady_state. The model is left at the last potential.
+        """
+        if self.U0 is None:
+            raise ValueError('Set the initial conditions first')
+        start = dict(self.U0)
+        vacancies = {vac.label for vac in self.vacancy}
+        out = SimpleNamespace(U=np.array(potentials, dtype=float), U_SHE=[],
+                              j=[], states=[], rates=[], method=[])
+        for U in potentials:
+            if scale == 'RHE':
+                if self.pH is None:
+                    raise ValueError('Set Model.pH to use the RHE scale')
+                U = U - kB * self.T * np.log(10.) * self.pH
+            elif scale != 'SHE':
+                raise ValueError("scale must be 'SHE' or 'RHE'")
+            self._U_SHE = U
+            for reaction in self._reactions:
+                reaction.update(**self._conditions())
+            self.set_initial_conditions(
+                {k: v for k, v in start.items() if k not in vacancies})
+            _, state, rates = self.find_steady_state(**kwargs)
+            out.U_SHE.append(U)
+            out.j.append(self.current(rates))
+            out.states.append(state)
+            out.rates.append(rates)
+            out.method.append(self.steady_state_method)
+            start = {k: v for k, v in state.items()
+                     if k in self.species and
+                     not isinstance(self.species[k], Electron)}
+        out.U_SHE = np.array(out.U_SHE)
+        out.j = np.array(out.j)
+        return out
+
+    def tafel_slope(self, dU=1e-3, **kwargs):
+        """Tafel slope dU/dlog10|j| (mV/decade) at the current potential,
+        by central differences with steady states at U -+ dU (V)."""
+        U = self.U_SHE
+        res = self.sweep([U - dU, U + dU], **kwargs)
+        self.U_SHE = U
+        return 1000 * 2 * dU / np.diff(np.log10(np.abs(res.j)))[0]
 
     def copy(self, initialize=True):
         """A new Model with the same settings, reactions, fixed species and

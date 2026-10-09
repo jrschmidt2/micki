@@ -21,7 +21,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from micki import (Adsorbate, Electron, Gas, Liquid, Lattice,  # noqa: E402
                    Model, Reaction, Solute, reactions_from_strings)
 from micki.db import read_from_db  # noqa: E402
-from micki.electrochem import Electrolyte, film_rhocat, levich_delta  # noqa: E402,E501
+from micki.electrochem import (Electrolyte, film_rhocat,  # noqa: E402
+                              levich_delta, tafel_slope)
+from micki import ModelAnalysis  # noqa: E402
+from ase.units import _e  # noqa: E402
 from ase.units import mol  # noqa: E402
 
 T = 298.15
@@ -477,6 +480,100 @@ class FilmTest(unittest.TestCase):
                 T=T, Asite=1e-19, L=0, delta=1e-5)
         with self.assertRaisesRegex(ValueError, 'near-surface'):
             Reaction(a + a, a.copy('x') + a.copy('y'), method='FILM')
+
+
+def two_pathway_model(U_RHE=0.3, pH=1., channels=('r1', 'r2'), E_a=0.2):
+    """A(aq) adsorbs and is reduced either by one electron (to P1) or by
+    two (to P2), irreversibly."""
+    el = Electrolyte()
+    sp = el.species()
+    slab = Adsorbate(Atoms(), 'slab', E=0.)
+    sp.update({'slab': slab,
+               'a_aq': Solute('a_aq', 0., 'O'),
+               'a': Adsorbate(Atoms('O'), 'a', E=E_a, sites=[slab]),
+               'p1_aq': Solute('p1_aq', -0.6, 'OH'),
+               'p2_aq': Solute('p2_aq', -1.5, 'OH2')})
+    steps = {
+        'ads': 'a_aq + * -> a',
+        'r1': ('a + h3o_aq + e <-> ^0.4 -> p1_aq + h2o_l + *',
+               {'reversible': False}),
+        'r2': ('a + 2 h3o_aq + 2 e <-> ^0.6 -> p2_aq + 2 h2o_l + *',
+               {'reversible': False}),
+    }
+    rxns = reactions_from_strings(sp, {k: v for k, v in steps.items()
+                                       if k == 'ads' or k in channels})
+    model = Model(T, Asite=1e-19, roughness=2., pH=pH)
+    model.add_reactions(rxns)
+    fixed = ['a_aq', 'h3o_aq', 'h2o_l'] + ['p1_aq', 'p2_aq'][:len(channels)]
+    model.set_fixed([f for f in fixed if f in model.species])
+    model.set_potential(U_RHE, scale='RHE')
+    U0 = {'a_aq': 1e-3, 'p1_aq': 0., 'p2_aq': 0.}
+    U0.update(el.concentrations(pH))
+    model.set_initial_conditions({k: v for k, v in U0.items()
+                                  if k in model.species})
+    return model
+
+
+class OutputTest(unittest.TestCase):
+
+    def setUp(self):
+        warnings.simplefilter('ignore')
+
+    def test_currents_and_selectivity(self):
+        model = two_pathway_model()
+        _, U, r = model.find_steady_state()
+        rho = 2. / 1e-19  # sites per m^2
+        j = -_e * rho * (r['r1'] + 2 * r['r2']) * 0.1  # mA/cm2
+        self.assertAlmostEqual(model.current() / j, 1., places=12)
+        self.assertAlmostEqual(model.current(unit='A/m2') / j, 10., places=12)
+        self.assertAlmostEqual(model.current(cathodic_negative=False) / j,
+                               -1., places=12)
+        partial = model.partial_currents()
+        self.assertEqual(set(partial), {'r1', 'r2'})
+        self.assertAlmostEqual(sum(partial.values()) / j, 1., places=12)
+        fe = (model.faradaic_efficiency('p1_aq', 1)
+              + model.faradaic_efficiency('p2_aq', 2))
+        self.assertAlmostEqual(fe, 1., places=10)
+        sel = (model.selectivity('p1_aq', 'a_aq')
+               + model.selectivity('p2_aq', 'a_aq'))
+        self.assertAlmostEqual(sel, 1., places=8)
+        self.assertAlmostEqual(model.production_rate('a_aq') / -r['ads'], 1.,
+                               places=10)
+
+    def test_sweep(self):
+        potentials = [0.6, 0.4, 0.2, 0.0]
+        model = two_pathway_model(U_RHE=0.6)
+        res = model.sweep(potentials, scale='RHE')
+        np.testing.assert_allclose(res.U_SHE,
+                                   np.array(potentials) - NERNST, rtol=1e-12)
+        for U, j, method in zip(potentials, res.j, res.method):
+            _, _, r = two_pathway_model(U_RHE=U).find_steady_state()
+            new = two_pathway_model(U_RHE=U)
+            self.assertAlmostEqual(j / new.current(r), 1., places=7)
+        self.assertAlmostEqual(model.U_RHE, 0.0, places=12)
+
+    def test_tafel_slope(self):
+        # one slow PCET step at low coverage: 2.303 kT / (beta e) per decade
+        model = two_pathway_model(U_RHE=0.9, channels=('r1',), E_a=0.4)
+        model.find_steady_state()
+        expected = -1000 * NERNST / 0.5  # cathodic: |j| grows as U falls
+        self.assertAlmostEqual(model.tafel_slope() / expected, 1., places=4)
+        res = two_pathway_model(U_RHE=0.95, channels=('r1',),
+                                E_a=0.4).sweep([0.95, 0.9, 0.85],
+                                               scale='RHE')
+        slopes, alphas = tafel_slope(res.U, res.j)
+        np.testing.assert_allclose(slopes, expected, rtol=1e-4)
+        np.testing.assert_allclose(alphas, 0.5, rtol=1e-4)
+
+    def test_analysis_of_current(self):
+        model = two_pathway_model()
+        U0 = dict(model.U0)
+        for quantity in ('current',
+                         lambda m, r: m.production_rate('p2_aq', r)):
+            analysis = ModelAnalysis(model, quantity, U0)
+            total = sum(float(analysis.campbell_rate_control(name, scale=0.01))
+                        for name in model.reactions)
+            self.assertAlmostEqual(total, 1., places=4)
 
 
 if __name__ == '__main__':

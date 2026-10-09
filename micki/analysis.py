@@ -18,9 +18,11 @@ class ModelAnalysis:
     model : Model
         The model, with reactions and fixed species set (normally a CSTR
         with fixed fluids).
-    product_reaction : str
-        Name of the reaction whose net rate r is analyzed (e.g. the
-        product-forming step).
+    product_reaction : str or callable
+        The analyzed quantity r: the name of a reaction (its net rate, e.g.
+        of the product-forming step), 'current' (the current density of an
+        electrochemical model), or a function f(model, rates) of the steady
+        state (e.g. a production rate or a partial current).
     Uequil : dict
         Initial conditions (as for Model.set_initial_conditions); the
         steady state is found from them, and the rate orders perturb them.
@@ -36,7 +38,6 @@ class ModelAnalysis:
     def __init__(self, model, product_reaction, Uequil, tol=1e-3, dt=3600):
         self.model = model
         self.reaction_name = product_reaction
-        self.product_reaction = model.reactions[product_reaction]
         self.Uequil = Uequil
         self.tol = tol
         self.dt = dt
@@ -48,9 +49,19 @@ class ModelAnalysis:
 
         self.species_symbols = []
         for species in self.model._species:
-            if species.symbol is not None:
+            # electrons have no concentration
+            if species.symbol is not None and species.label in self.U:
                 self.species_symbols.append(species)
-        self.rmid = self.r[self.reaction_name]
+        self.rmid = self._value(self.model, self.r)
+
+    def _value(self, model, r):
+        """The analyzed quantity at a steady state with rates r."""
+        if callable(self.reaction_name):
+            return self.reaction_name(model, r)
+        if self.reaction_name not in model.reactions \
+                and self.reaction_name == 'current':
+            return model.current(r)
+        return r[self.reaction_name]
 
     def campbell_rate_control(self, rxn_name, scale=0.001):
         """Campbell's degree of rate control (k/r) dr/dk of reaction
@@ -80,7 +91,7 @@ class ModelAnalysis:
             reaction.set_scale('krev', 1.0)
 
         model.finalize()
-        rlow = r1[self.reaction_name]
+        rlow = self._value(model, r1)
         if isinstance(klow, sym.Basic):
             subs = {}
             for species in self.species_symbols:
@@ -100,7 +111,7 @@ class ModelAnalysis:
             reaction.set_scale('krev', 1.0)
 
         model.finalize()
-        rhigh = r2[self.reaction_name]
+        rhigh = self._value(model, r2)
         if isinstance(khigh, sym.Basic):
             subs = {}
             for species in self.species_symbols:
@@ -146,7 +157,7 @@ class ModelAnalysis:
                 sp.dE += dg
 
         model.finalize()
-        rlow = r1[self.reaction_name]
+        rlow = self._value(model, r1)
 
         for sp in species:
             sp.dE += dg
@@ -167,7 +178,7 @@ class ModelAnalysis:
             reaction.update(force=True, **self.model._conditions())
 
         model.finalize()
-        rhigh = r2[self.reaction_name]
+        rhigh = self._value(model, r2)
 
         # central difference: the two rates are 2 * dg apart in free energy
         return (rlow - rhigh) * kB * T / (self.rmid * 2 * dg)
@@ -183,7 +194,7 @@ class ModelAnalysis:
         t1, U1, r1 = model.find_steady_state()
         model.finalize()
 
-        rlow = r1[self.reaction_name]
+        rlow = self._value(model, r1)
 
         model = self.model.copy(initialize=False)
         model.T = T + dT
@@ -191,7 +202,7 @@ class ModelAnalysis:
         t2, U2, r2 = model.find_steady_state()
         model.finalize()
 
-        rhigh = r2[self.reaction_name]
+        rhigh = self._value(model, r2)
 
         return kB * T**2 * (rhigh - rlow) / (self.rmid * 2 * dT)
 
@@ -212,14 +223,14 @@ class ModelAnalysis:
         model.set_initial_conditions(U0)
         t1, U1, r1 = model.find_steady_state()
         model.finalize()
-        rlow = r1[self.reaction_name]
+        rlow = self._value(model, r1)
 
         rhohigh = rhomid * (1.0 + drho)
         U0[species.label] = rhohigh
         model.set_initial_conditions(U0)
         t2, U2, r2 = model.find_steady_state()
         model.finalize()
-        rhigh = r2[self.reaction_name]
+        rhigh = self._value(model, r2)
 
         return (rhomid / self.rmid) * (rhigh - rlow) / (rhohigh - rholow)
 
@@ -243,7 +254,7 @@ class ModelAnalysis:
         if not rhomid > 0:
             raise ValueError('{} has no positive concentration'
                              ''.format(fluid.label))
-        rmid = self.r[self.reaction_name]
+        rmid = self._value(self.model, self.r)
         gmid = adsorbates[0].get_G(self.model.T)
         if isinstance(gmid, sym.Basic):
             trans = {}
@@ -275,7 +286,7 @@ class ModelAnalysis:
                 model.set_initial_conditions(U0)
 
                 ti, Ui, ri = model.find_steady_state()
-                dr += i * j * ri[self.reaction_name]
+                dr += i * j * self._value(model, ri)
 
             for adsorbate in adsorbates:
                 set_dg(adsorbate, -i * dg)

@@ -135,3 +135,14 @@ def film_rhocat(Asite, roughness, delta):
     equilibria) or for transients; steady states of film transport and
     surface steps alone do not depend on rhocat."""
     return roughness / (Asite * mol) / delta / 1000.
+
+
+def tafel_slope(U, j, T=298.15):
+    """Tafel slopes dU/dlog10|j| (mV/decade) of a polarization curve
+    (potentials U in V, current densities j), by finite differences
+    (numpy.gradient), and the apparent transfer coefficients
+    2.303 kT / (e |slope|). Returns (slopes, coefficients) as arrays."""
+    U = np.asarray(U, dtype=float)
+    logj = np.log10(np.abs(np.asarray(j, dtype=float)))
+    slopes = 1000 * np.gradient(U) / np.gradient(logj)
+    return slopes, kB * T * np.log(10.) / np.abs(slopes / 1000)
