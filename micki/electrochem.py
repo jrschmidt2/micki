@@ -1,7 +1,7 @@
 """Electrochemistry helpers: solution species, concentrations at a given pH"""
 
 import numpy as np
-from ase.units import kB
+from ase.units import kB, mol
 
 from micki.reactants import Electron, Solute
 
@@ -110,3 +110,28 @@ class Electrolyte:
             out[acid] = total * fraction
             out[spec['base']] = total * (1. - fraction)
         return out
+
+
+def levich_delta(nu, rpm, D=None):
+    """Nernst diffusion layer thickness (m) at a rotating disk electrode,
+    delta = 1.61 D^(1/3) nu^(1/6) omega^(-1/2) (Levich), with kinematic
+    viscosity nu (m^2/s, about 1e-6 for water), rotation rate rpm and
+    diffusion coefficient D (m^2/s). Without D, returns the function of D
+    (e.g. Model(..., delta=levich_delta(1e-6, 1600)), so that each species
+    gets the thickness for its own D)."""
+    omega = 2 * np.pi * rpm / 60.
+
+    def delta(D):
+        return 1.61 * D ** (1. / 3) * nu ** (1. / 6) / np.sqrt(omega)
+    return delta if D is None else delta(D)
+
+
+def film_rhocat(Asite, roughness, delta):
+    """Concentration (M) of surface sites relative to the volume of a film
+    of thickness delta (m): roughness / (Asite N_A) mol per geometric area
+    divided by delta. Model(..., rhocat=film_rhocat(...)) makes the
+    near-surface concentrations change at their physical rates, which
+    matters when solution reactions act in the film (e.g. buffer
+    equilibria) or for transients; steady states of film transport and
+    surface steps alone do not depend on rhocat."""
+    return roughness / (Asite * mol) / delta / 1000.

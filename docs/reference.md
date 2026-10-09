@@ -11,7 +11,7 @@ in the [overview](index.md#units). Defaults marked *(conventions)* change under
 - [Lattice](#lattice)
 - [Lateral interactions: first_order](#microkilateralfirst_order)
 - [Conventions](#microkiconventions)
-- [Electrolyte](#mickielectrochem), [EnergyReference](#energyreference), [databases](#microkidb), [VASP output](#microkioparse_vasp_out), [utilities](#microkiutils)
+- [Electrolyte](#mickielectrochem), [EnergyReference](#energyreference), [databases](#mickidb), [VASP output](#mickiioparse_vasp_out), [utilities](#mickiutils)
 
 ## Species
 
@@ -160,14 +160,14 @@ The constructor takes the sides as species objects:
 Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
          dground=False, reversible=True, clip=..., alpha=...,
          explicit_ts=False, check_balance=True, beta=None, U_ref=None,
-         dG_act0=None, dG_reorg=0., prefactor=None)
+         dG_act0=None, dG_reorg=0., prefactor=None, delta=None)
 ```
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `reactants`, `products` | — | Species or sums of species. Missing empty sites are added to balance the sites. |
 | `ts` | `None` | Transition-state species (or sum). |
-| `method` | `'TST'` with `ts`/`dG_act`, else `'EQUIL'` | Rate law: `'TST'`, `'EQUIL'`, `'DIEQUIL'`, `'STICK'`, `'ER'`, `'DIFF'`, `'DIFF_LIQ'` (see the [user guide](user-guide.md#rate-laws)). Case-insensitive. |
+| `method` | `'TST'` with `ts`/`dG_act`, else `'EQUIL'` | Rate law: `'TST'`, `'EQUIL'`, `'DIEQUIL'`, `'STICK'`, `'ER'`, `'DIFF'`, `'DIFF_LIQ'`, `'FILM'` (see the [user guide](user-guide.md#rate-laws)). Case-insensitive. |
 | `S0` | 1 | Sticking coefficient (`'ER'`). |
 | `dG_act` | `None` | Activation free energy (eV) instead of `ts`. |
 | `dground` | `False` | Removed: `True` raises `ValueError`; use `clip='zero_coverage'`. |
@@ -180,6 +180,14 @@ Reaction(reactants, products, ts=None, method=None, S0=1., dG_act=None,
 | `dG_act0` | `None` | Barrier (eV) where ΔG = 0, instead of a transition state: ΔG‡ = dG_act0 + β·ΔG (e.g. "simple" PCET steps; CatMap's `^0.26eV`). In strings: `'a + h3o + e <-> ^0.26 -> ah + h2o'`. |
 | `dG_reorg` | 0 | Additional barrier (eV), e.g. solvent reorganization: rate constants × exp(−dG_reorg/kT), for any rate law including barrierless ones. |
 | `prefactor` | kT/h | Replaces kT/h (1/s) in the TST and EQUIL rate laws. |
+| `delta` | `Model.delta` | `FILM` only: film thickness (m), or a function of D (e.g. `levich_delta(nu, rpm)`). |
+
+**`FILM`** transports a fluid species through a film (Nernst diffusion layer)
+to its near-surface copy (`'x_aq -> x_dl'`, with `x_dl = x_aq.copy('x_dl')`).
+Its rate constant is k = 1000·D·N_A·Asite/(roughness·δ) per site, from a flux
+D(c_bulk − c_near)/δ per geometric area. D is taken from the bulk species
+(else the copy), and roughness and δ from the `Model`. Film steps, like
+surface steps, change fluid concentrations through `rhocat`.
 | `check_balance` | `True` | Raise `ValueError` unless reactants, products and transition state contain the same atoms and carry the same charge (for the atoms, empty sites, i.e. species listed in a reaction species' `sites`, and electrons are not counted; an adsorbate's site atoms, e.g. the slab in its structure, removed). |
 
 Electrochemical steps (with `Electron` species) default to `clip='coverage'`
@@ -219,8 +227,10 @@ Model(T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
 | `analytic_jac` | `False` | Exact (complex-step) Jacobian for IDA instead of difference quotients. |
 | `U_SHE` | 0 | Electrode potential (V vs SHE), the potential of the `Electron` species. |
 | `pH` | `None` | pH, used only to convert between the SHE and RHE scales; set the concentrations of H₃O⁺ and other species in the initial conditions. |
+| `roughness` | 1 | Roughness factor (electrochemical surface area / geometric area): sites per geometric area = roughness/Asite. |
+| `delta` | `None` | Film thickness (m) for `FILM` steps, or a function of the diffusion coefficient (`levich_delta(nu, rpm)`). |
 
-`T`, `Asite`, `z`, `lattice` and `U_SHE` are properties; setting them
+`T`, `Asite`, `z`, `lattice`, `U_SHE`, `roughness` and `delta` are properties; setting them
 rebuilds an initialized model. `U_RHE` (V vs RHE, U_SHE + (kT ln 10/e)·pH) is
 read-only.
 `set_potential(U, scale='SHE')` sets the potential on the `'SHE'` or `'RHE'`
@@ -329,6 +339,11 @@ Solution species of an aqueous electrolyte, on the SHE scale.
 |---|---|
 | `species()` | `{label: species}`: H₃O⁺, water (`rhoref` 55.5 M, activity 1), OH⁻, the acids and their conjugate bases (`Solute`s), and an `Electron`. G(H₃O⁺, 1 M) + G(e⁻, 0 V) = ½G(H₂) + G(H₂O); OH⁻ from pKw; A⁻ from pKa (HA + H₂O ⇌ H₃O⁺ + A⁻, ΔG = kT ln10·pKa). |
 | `concentrations(pH, totals=None)` | `{label: M}` at the pH: [H₃O⁺] = 10^−pH, [OH⁻] = K_w/[H₃O⁺], water 55.5 M, and each acid in `totals` split by Henderson–Hasselbalch. For the initial conditions (fixed species). |
+
+| Function | Meaning |
+|---|---|
+| `levich_delta(nu, rpm, D=None)` | Nernst layer thickness (m) at a rotating disk: 1.61 D^⅓ ν^⅙ ω^−½ (ν in m²/s, about 1e-6 for water; ω = 2π·rpm/60). Without D, the function of D for `Model(delta=...)`. |
+| `film_rhocat(Asite, roughness, delta)` | Site concentration (M) relative to the film volume, for `Model(rhocat=...)`: physical near-surface transients, needed when solution reactions act in the film. Steady states of film transport and surface steps alone do not depend on it. |
 
 ## EnergyReference
 

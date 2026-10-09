@@ -21,7 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from micki import (Adsorbate, Electron, Gas, Liquid, Lattice,  # noqa: E402
                    Model, Reaction, Solute, reactions_from_strings)
 from micki.db import read_from_db  # noqa: E402
-from micki.electrochem import Electrolyte  # noqa: E402
+from micki.electrochem import Electrolyte, film_rhocat, levich_delta  # noqa: E402,E501
+from ase.units import mol  # noqa: E402
 
 T = 298.15
 NERNST = kB * T * np.log(10.)  # V per pH unit (0.05916 V at 298.15 K)
@@ -408,6 +409,74 @@ class ElectrolyteTest(unittest.TestCase):
         self.assertAlmostEqual(np.log10(rates['h2o_l', 2.]
                                         / rates['h2o_l', 1.]),
                                beta, places=8)
+
+
+class FilmTest(unittest.TestCase):
+    """Transport through a Nernst film (method FILM)."""
+
+    def setUp(self):
+        warnings.simplefilter('ignore')
+
+    def _model(self, rhocat=1., D=2e-9, delta=2e-5, roughness=2.):
+        slab = Adsorbate(Atoms(), 'slab', E=0.)
+        x_aq = Solute('x_aq', 0., 'O2', D=D)
+        species = [slab, x_aq, x_aq.copy('x_dl'),
+                   Adsorbate(Atoms('O2'), 'x', E=-1.0, sites=[slab]),
+                   Solute('y_aq', -3.0, 'O2')]
+        rxns = reactions_from_strings(species, {
+            'film': ('x_aq -> x_dl', {'method': 'FILM'}),
+            'ads': 'x_dl + * -> x',
+            'react': ('x -> y_aq + *', {'dG_act': 0., 'reversible': False}),
+        })
+        model = Model(T, Asite=1e-19, roughness=roughness, delta=delta,
+                      rhocat=rhocat)
+        model.add_reactions(rxns)
+        model.set_fixed(['x_aq', 'y_aq'])
+        model.set_initial_conditions({'x_aq': 1e-3, 'y_aq': 0.})
+        return model
+
+    def test_limiting_flux(self):
+        # fast surface consumption: the flux per geometric area is the
+        # limiting D c_bulk / delta
+        D, delta, roughness, Asite = 2e-9, 2e-5, 2., 1e-19
+        model = self._model()
+        _, U, r = model.find_steady_state()
+        flux = r['film'] * roughness / (Asite * mol)  # mol / (m^2 s)
+        self.assertAlmostEqual(flux / (D * 1e-3 * 1000 / delta), 1., places=6)
+        self.assertLess(U['x_dl'], 1e-9 * 1e-3)
+        # the same steady state with the physical site concentration
+        model2 = self._model(rhocat=film_rhocat(Asite, roughness, delta))
+        _, U2, r2 = model2.find_steady_state()
+        self.assertAlmostEqual(r2['film'] / r['film'], 1., places=8)
+
+    def test_levich(self):
+        nu, rpm, D = 1e-6, 1600, 2.3e-9
+        omega = 2 * np.pi * rpm / 60.
+        expected = 1.61 * D**(1 / 3.) * nu**(1 / 6.) * omega**-0.5
+        self.assertAlmostEqual(levich_delta(nu, rpm, D), expected, places=15)
+        self.assertAlmostEqual(levich_delta(nu, rpm)(D), expected,
+                               places=15)
+        # the film thickness per species from the model's function
+        model = self._model(delta=levich_delta(nu, rpm), D=D)
+        model.reactions['film'].update(**model._conditions())
+        self.assertAlmostEqual(
+            float(model.reactions['film'].kfor),
+            1000 * D * mol * 1e-19 / (2. * expected), places=8)
+
+    def test_errors(self):
+        a = Solute('a', 0., 'O2', D=1e-9)
+        b = Solute('b', 0.1, 'O2')
+        rxn = Reaction(a, b, method='FILM')
+        with self.assertRaisesRegex(ValueError, 'copy'):
+            rxn.update(T=T, Asite=1e-19, L=0, delta=1e-5)
+        rxn = Reaction(a, a.copy('a_dl'), method='FILM')
+        with self.assertRaisesRegex(ValueError, 'thickness'):
+            rxn.update(T=T, Asite=1e-19, L=0)
+        with self.assertRaisesRegex(ValueError, ' D '):
+            Reaction(b, b.copy('b_dl'), method='FILM').update(
+                T=T, Asite=1e-19, L=0, delta=1e-5)
+        with self.assertRaisesRegex(ValueError, 'near-surface'):
+            Reaction(a + a, a.copy('x') + a.copy('y'), method='FILM')
 
 
 if __name__ == '__main__':

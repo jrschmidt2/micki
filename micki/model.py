@@ -260,7 +260,7 @@ class Reaction:
                  dG_act=None, dground=False, reversible=True, clip=DEFAULT,
                  alpha=DEFAULT, explicit_ts=False, check_balance=True,
                  beta=None, U_ref=None, dG_act0=None, dG_reorg=0.,
-                 prefactor=None):
+                 prefactor=None, delta=None):
         self.conventions = get_conventions()
         catmap = self.conventions == 'catmap'
         n_electrons = (sum(isinstance(sp, Electron)
@@ -428,6 +428,19 @@ class Reaction:
         if prefactor is not None and self.method not in ('TST', 'EQUIL'):
             raise ValueError('prefactor replaces kT/h of the TST and EQUIL '
                              'rate laws')
+        # film transport (method 'FILM')
+        self.delta = delta
+        self.roughness = 1.
+        self.model_delta = None
+        if self.method == 'FILM':
+            if len(self.reactants) != 1 or len(self.products) != 1 \
+                    or not isinstance(self.reactants[0], _Fluid) \
+                    or not isinstance(self.products[0], _Fluid):
+                raise ValueError('FILM transports one fluid species to its '
+                                 'near-surface copy: write "bulk -> near"')
+        # rates per site: surface steps and film transport (their fluid
+        # concentrations change with rhocat, the site concentration)
+        self.per_site = self.involves_catalyst or self.method == 'FILM'
         self.scale_params = ['dH_act', 'dS_act', 'kfor', 'krev']
         self.alpha = None
         self.reversible = reversible
@@ -585,16 +598,24 @@ class Reaction:
         self._check_scale_param(param)
         self.scale[param] = value
 
-    def update(self, T=None, Asite=None, L=None, force=False, U=None):
+    def update(self, T=None, Asite=None, L=None, force=False, U=None,
+               roughness=None, delta=None):
         """Recompute the thermochemistry and rate constants at temperature
-        T (K), site area Asite (m^2), diffusion length L (m) and electrode
-        potential U (V vs SHE; None keeps the current one), if any of them
-        (or a scale factor) changed, or if force. The Model calls this."""
-        if not force and not self.is_update_needed(T, Asite, L, U):
+        T (K), site area Asite (m^2), diffusion length L (m), electrode
+        potential U (V vs SHE), roughness factor and film thickness delta
+        (for FILM), if any of them (or a scale factor) changed, or if force.
+        U, roughness and delta: None keeps the current value. The Model
+        calls this."""
+        if not force and not self.is_update_needed(T, Asite, L, U, roughness,
+                                                   delta):
             return
 
         if U is not None:
             self.U = U
+        if roughness is not None:
+            self.roughness = roughness
+        if delta is not None:
+            self.model_delta = delta
         for species in self.species + list(self.ts or []):
             if isinstance(species, Electron):
                 species.U = self.U
@@ -607,6 +628,11 @@ class Reaction:
         self.dH = self.products.get_H(T) - self.reactants.get_H(T)
         self.dS = self.products.get_S(T) - self.reactants.get_S(T)
         self.dG = self.dH - self.T * self.dS
+        if self.method == 'FILM' and abs(_at_zero_coverage(self.dG)) > 1e-9:
+            raise ValueError('FILM connects a species with its near-surface '
+                             'copy, which must have the same free energy '
+                             '({}: dG = {:g} eV); use species.copy()'
+                             ''.format(self, _at_zero_coverage(self.dG)))
         if self.ts is not None:
             for species in self.ts:
                 species.update(T=T, force=True)
@@ -707,8 +733,14 @@ class Reaction:
         self._calc_krev()
         self.scale_old = self.scale.copy()
 
-    def is_update_needed(self, T, Asite, L, U=None):
+    def is_update_needed(self, T, Asite, L, U=None, roughness=None,
+                         delta=None):
         if U is not None and U != self.U:
+            return True
+        if roughness is not None and roughness != self.roughness:
+            return True
+        if delta is not None and delta is not self.model_delta \
+                and delta != self.model_delta:
             return True
         for species in self.species:
             if species.is_update_needed(T):
@@ -726,19 +758,22 @@ class Reaction:
                 return True
         return False
 
-    def get_keq(self, T=None, Asite=None, L=None, U=None):
+    def get_keq(self, T=None, Asite=None, L=None, U=None, roughness=None,
+                delta=None):
         """Equilibrium constant (see update() for the arguments)."""
-        self.update(T, Asite, L, U=U)
+        self.update(T, Asite, L, U=U, roughness=roughness, delta=delta)
         return self.keq
 
-    def get_kfor(self, T=None, Asite=None, L=None, U=None):
+    def get_kfor(self, T=None, Asite=None, L=None, U=None, roughness=None,
+                delta=None):
         """Forward rate constant (see update() for the arguments)."""
-        self.update(T, Asite, L, U=U)
+        self.update(T, Asite, L, U=U, roughness=roughness, delta=delta)
         return self.kfor
 
-    def get_krev(self, T=None, Asite=None, L=None, U=None):
+    def get_krev(self, T=None, Asite=None, L=None, U=None, roughness=None,
+                delta=None):
         """Reverse rate constant (see update() for the arguments)."""
-        self.update(T, Asite, L, U=U)
+        self.update(T, Asite, L, U=U, roughness=roughness, delta=delta)
         return self.krev
 
     def _calc_keq(self):
@@ -823,6 +858,24 @@ class Reaction:
                 * self.scale['krev']
             kfor2 = self.keq * krev2
             self.kfor = kfor1 * kfor2 / (kfor1 + kfor2)
+        elif self.method == 'FILM':
+            # transport through a film (Nernst diffusion layer) of thickness
+            # delta to the electrode: flux D (c_bulk - c_near) / delta per
+            # geometric area, per site with roughness / Asite sites per area
+            bulk, near = self.reactants[0], self.products[0]
+            D = bulk.D if bulk.D is not None else near.D
+            if D is None:
+                raise ValueError('FILM needs the diffusion coefficient D of '
+                                 '{}'.format(bulk))
+            delta = self.delta if self.delta is not None else self.model_delta
+            if delta is None:
+                raise ValueError('FILM needs a film thickness: '
+                                 'Reaction(..., delta=) or Model(..., '
+                                 'delta=)')
+            if callable(delta):
+                delta = delta(D)
+            self.kfor = (1000 * D * mol * self.Asite / (self.roughness * delta)
+                         * barr * self.scale['kfor'])
         elif self.method == 'DIFF':
             if self.L is None:
                 raise ValueError("Must provide diffusion length "
@@ -954,9 +1007,12 @@ class Model:
     """
 
     def __init__(self, T, Asite, z=0, lattice=None, reactor='CSTR', rhocat=1,
-                 analytic_jac=False, U_SHE=0., pH=None):
+                 analytic_jac=False, U_SHE=0., pH=None, roughness=1.,
+                 delta=None):
         self._U_SHE = U_SHE  # electrode potential vs SHE (V)
         self.pH = pH
+        self._roughness = roughness
+        self._delta = delta
         self.reactions = OrderedDict()
         self._reactions = []
         self._species = []
@@ -981,7 +1037,25 @@ class Model:
     def _conditions(self):
         """Keyword arguments for Reaction.update."""
         return {'T': self.T, 'Asite': self.Asite, 'L': self.z,
-                'U': self.U_SHE}
+                'U': self.U_SHE, 'roughness': self.roughness,
+                'delta': self.delta}
+
+    def _set_condition(self, name, value):
+        setattr(self, name, value)
+        for reaction in self._reactions:
+            reaction.update(**self._conditions())
+        if self.U0 is not None:
+            self.set_initial_conditions(self.U0)
+
+    roughness = property(
+        lambda self: self._roughness,
+        lambda self, value: self._set_condition('_roughness', value),
+        doc='Roughness factor: electrochemical surface area / geometric area')
+    delta = property(
+        lambda self: self._delta,
+        lambda self, value: self._set_condition('_delta', value),
+        doc='Film thickness (m) for FILM transport, or a function of the '
+            'diffusion coefficient (e.g. micki.electrochem.levich_delta)')
 
     def set_U_SHE(self, U):
         self._U_SHE = U
@@ -1355,7 +1429,7 @@ class Model:
                 rcount = rxn.reactants.species.count(species)
                 pcount = rxn.products.species.count(species)
                 self.dypdr[i, j] = -rcount + pcount
-                if isinstance(species, _Fluid) and rxn.involves_catalyst:
+                if isinstance(species, _Fluid) and rxn.per_site:
                     self.dypdr[i, j] *= self.rhocat
 
             for species in self._species + self.vacancy:
@@ -1544,7 +1618,8 @@ class Model:
         newmodel = Model(self.T, self.Asite, z=self.z, lattice=self.lattice,
                          reactor=self.reactor, rhocat=self.rhocat,
                          analytic_jac=self.analytic_jac,
-                         U_SHE=self.U_SHE,
+                         U_SHE=self.U_SHE, roughness=self.roughness,
+                         delta=self.delta,
                          pH=self.pH)
         newmodel.add_reactions(self.reactions)
         newmodel.set_fixed(self.fixed)
