@@ -285,5 +285,11 @@ exactly this for CatMap's oxygen-reduction and hydrogen-evolution models:
   - currents, selectivities and sweeps.
 - **CatMap** (`tests/test_catmap.py`): oxygen reduction (2e⁻/4e⁻ pathways,
   double-layer transport, β = 0.5 and 0.1, Hansen et al. 2014 energies) at 7
-  potentials, and hydrogen evolution at 4. Rate constants and coverages agree
-  to about 1e-14.
+  potentials, and hydrogen evolution at 4. Also the c-NiSe₂(100) oxygen
+  reduction model of Mondal et al., ACS Catal. 15, 8788 (2025), at pH 1.25
+  and 8 potentials. Rate constants and coverages agree to about 1e-14.
+- **Multiple steady states:** the NiSe₂ model has two steady states near
+  0.65 V vs SHE, one covered by OOH* and one nearly clean. Which one a solve
+  finds depends on where it starts. `Model.sweep` continues from the
+  previous steady state, so sweeping up and sweeping down can give
+  different branches (hysteresis).
