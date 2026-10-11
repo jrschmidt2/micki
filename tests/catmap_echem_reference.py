@@ -65,7 +65,7 @@ ReactionModel._h = _constant('_h', ASE_H)
 def write_inputs(m, V, workdir):
     rows = ['surface_name\tsite_name\tspecies_name\tformation_energy\t'
             'bulk_structure\tfrequencies\tother_parameters\treference']
-    for name, (site, E) in catmap_echem.ENERGIES.items():
+    for name, (site, E) in m['energies'].items():
         base = name.rsplit('_', 1)[0]
         if site == 'gas':
             rows.append('None\tgas\t%s\t%r\tNone\t[]\t[]\tx' % (base, E))

@@ -1,17 +1,23 @@
-"""Two electrochemical models in CatMap's input terms, for test_catmap.py:
-oxygen reduction (2e- and 4e- pathways, transport through a "double
-layer" site, PCET steps with barriers at the equilibrium potential and
-beta = 0.5 or 0.1, thermal O-O scission) and hydrogen evolution
-(Volmer-Heyrovsky), with Pt(111) free energies from Hansen et al., J. Phys.
-Chem. C 118, 6706 (2014). They are J. R. Schmidt's CatMap templates
-(ORR.mkm, ORR_input.txt), solved by CatMap at a series of potentials
+"""Electrochemical models in CatMap's input terms, for test_catmap.py:
+
+- oxygen reduction on Pt(111) (2e- and 4e- pathways, transport through a
+  "double layer" site, PCET steps with barriers at the equilibrium
+  potential and beta = 0.5 or 0.1, thermal O-O scission) and hydrogen
+  evolution (Volmer-Heyrovsky), with free energies from Hansen et al., J.
+  Phys. Chem. C 118, 6706 (2014): J. R. Schmidt's CatMap templates
+  (ORR.mkm, ORR_input.txt), at pH 0 (pe_g at pressure 1);
+- oxygen reduction on c-NiSe2(100), the model of Mondal et al., ACS Catal.
+  15, 8788 (2025) (NiSe2.mkm, NiSe2_FE.inp), at pH 1.25 (pe_g at pressure
+  0.056 with potentials vs SHE).
+
+They are solved by CatMap at a series of potentials
 (catmap_echem_reference.py, CatMap environment).
 
-CatMap's proton-electron pair pe_g at pressure 1 corresponds in micki to
-H3O+ at 1 M (pH 0, where the SHE and RHE scales coincide) plus an
-electron, each releasing a water molecule at activity 1. build() makes
-the models in micki that way; this module imports micki only inside
-build(), so the CatMap environment can use the specs.
+CatMap's proton-electron pair pe_g at pressure p corresponds in micki to
+H3O+ at p M plus an electron at the same potential (vs SHE), each
+releasing a water molecule at activity 1. build() makes the models in
+micki that way; this module imports micki only inside build(), so the
+CatMap environment can use the specs.
 """
 
 import os
@@ -24,7 +30,7 @@ T = 298.
 
 # free energies (eV) relative to H2(g) and H2O(l), CatMap's frozen
 # formation energies: name -> (site, energy); site 'gas' for gases
-ENERGIES = {
+PT_ENERGIES = {
     'pe_g': ('gas', 0.), 'H2_g': ('gas', 0.), 'H2O_g': ('gas', 0.),
     'O2_g': ('gas', 4.739), 'H2O2_g': ('gas', 3.113),
     'H2O2_a': ('a', 3.363), 'H2O2_dl': ('dl', 3.113), 'O2_a': ('a', 4.563),
@@ -33,8 +39,18 @@ ENERGIES = {
     'OH-O_a': ('a', 4.639), 'O-O_a': ('a', 5.203),
 }
 
+# c-NiSe2(100), Mondal et al. 2025 (NiSe2_FE.inp)
+NISE2_ENERGIES = {
+    'pe_g': ('gas', 0.), 'H2O_g': ('gas', 0.), 'O2_g': ('gas', 5.19),
+    'H2O2_g': ('gas', 3.48), 'O2_dl': ('dl', 5.19), 'H2O2_dl': ('dl', 3.48),
+    'O_a': ('a', 1.70), 'OH_a': ('a', 1.07), 'O-O_a': ('a', 5.68),
+    'OH-O_a': ('a', 4.64), 'O2_a': ('a', 4.94), 'OOH_a': ('a', 4.03),
+    'H2O2_a': ('a', 3.69),
+}
+
 ORR = {
     'name': 'ORR (Pt, Hansen 2014)',
+    'energies': PT_ENERGIES,
     'sites': ['a', 'dl'],
     # expression, prefactor (None: kT/h), beta
     'reactions': [
@@ -57,6 +73,7 @@ ORR = {
 
 HER = {
     'name': 'HER (Pt, Hansen 2014)',
+    'energies': PT_ENERGIES,
     'sites': ['a'],
     'reactions': [
         ('*_a + pe_g <-> ^0.26eV_a -> H_a', 1e9, 0.5),
@@ -66,7 +83,31 @@ HER = {
     'voltages': [-0.5, -0.3, -0.1, 0.1],
 }
 
-MODELS = {'orr': ORR, 'her': HER}
+NISE2 = {
+    'name': 'ORR (c-NiSe2(100), Mondal et al. 2025)',
+    'energies': NISE2_ENERGIES,
+    'sites': ['a', 'dl'],
+    'reactions': [
+        ('O2_g + *_dl -> O2_dl', 824336.5772, 0.5),
+        ('O2_dl + *_a -> O2_a + *_dl', 1e8, 0.5),
+        ('O2_a + pe_g <-> ^0.26eV_a -> OOH_a', 1e9, 0.5),
+        ('OOH_a + pe_g <-> ^1.95eV_a -> O_a + H2O_g', 1e9, 0.5),
+        ('O_a + pe_g <-> ^0.26eV_a -> OH_a', 1e9, 0.5),
+        ('OH_a + pe_g <-> ^0.26eV_a -> H2O_g + *_a', 1e9, 0.5),
+        ('OOH_a + pe_g <-> ^0.26eV_a -> H2O2_a', 1e9, 0.5),
+        ('H2O2_a + pe_g <-> ^0.4eV_a -> H2O_g + OH_a', 1e9, 0.13),
+        ('H2O2_a + *_dl -> H2O2_dl + *_a', 1e8, 0.5),
+        ('H2O2_dl -> H2O2_g + *_dl', 824336.5772, 0.5),
+        ('OOH_a + *_a <-> OH-O_a + *_a -> OH_a + O_a', None, 0.5),
+        ('O2_a + *_a <-> O-O_a + *_a -> O_a + O_a', None, 0.5),
+    ],
+    # pe_g at 10^-1.25: pH 1.25 (0.05 M H2SO4), potentials vs SHE
+    'pressures': {'H2O_g': 1., 'H2O2_g': 0., 'O2_g': 2.34e-5,
+                  'pe_g': 0.056},
+    'voltages': [-0.072, 0.1, 0.3, 0.45, 0.55, 0.65, 0.8, 0.926],
+}
+
+MODELS = {'orr': ORR, 'her': HER, 'nise2': NISE2}
 
 
 def species_names(m):
@@ -108,7 +149,7 @@ def build(m):
     for name in species_names(m):
         if name == 'pe_g':
             continue
-        site, E = ENERGIES[name]
+        site, E = m['energies'][name]
         if site == 'gas':
             # CatMap's frozen gases at pressure p: solutes with G = E and
             # activity p (no kT: the given value is the free energy)

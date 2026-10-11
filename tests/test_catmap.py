@@ -163,6 +163,10 @@ class CatMapEchemTest(unittest.TestCase):
                 model.add_reactions(rxns)
                 U0 = catmap_echem.initial(m)
                 model.set_fixed(list(U0))
+                # start from CatMap's solution: the NiSe2 model has two
+                # steady states at some potentials, and this checks that
+                # CatMap's is a steady state of micki's equations
+                U0.update({a: theta for a, theta in c['coverage'].items()})
                 model.set_initial_conditions(U0)
                 T = catmap_echem.T
                 # free energies; CatMap's pe_g is H3O+ + e- - H2O here
